@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            f"mangalarga = {package_name}.mangalarga:main",
         ],
     },
 )
