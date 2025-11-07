@@ -48,3 +48,7 @@ SEARCH_POINTS = [
         'y': 0,
     },
 ]
+
+# descend
+DESCEND_ALTITUDE = 3
+DESCEND_GO_TIMEOUT = 30
