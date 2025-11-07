@@ -6,8 +6,13 @@ IS_INDOOR = True
 
 # Camera parameters - IMX219 down-facing
 IMAGE_SOURCE = "imx219"
-IMX219_WIDTH = 1640
-IMX219_HEIGHT = 1232
+CAMERA_WIDTH = 1640
+CAMERA_HEIGHT = 1232
+FOV_H = 62.2
+FOV_V = 48.8
+PIXELS_PER_DEGREE_H = CAMERA_WIDTH  / FOV_H
+PIXELS_PER_DEGREE_V = CAMERA_HEIGHT / FOV_V
+PIXELS_PER_DEGREE = (PIXELS_PER_DEGREE_H + PIXELS_PER_DEGREE_V) / 2
 
 # Yolo settings
 MODEL_PATH = os.path.join(
@@ -24,3 +29,22 @@ TAKEOFF_ALTITUDE = 3.0
 TAKEOFF_SLEEP = 5
 TAKEOFF_TIMEOUT = 60
 ALTITUDE_TOLERANCE = 0.1
+
+# search_id
+SEARCH_ALTITUDE = 5
+SEARCH_POINTS_TIMEOUT = 30 # seconds
+SEARCH_NUMBER_PHOTO = 1
+SEARCH_POINTS = [
+    {
+        'x': 0,
+        'y': 0,
+    },
+    {
+        'x': 4.6,
+        'y': 0,
+    },
+    {
+        'x': 4.6,
+        'y': 0,
+    },
+]

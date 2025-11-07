@@ -11,8 +11,7 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 from bouncing.states import (
     Initialize,
     Takeoff,
-    SearchId,
-    SearchLandBase,
+    Search,
     Descend,
     Land,
 )
@@ -30,16 +29,11 @@ class Bouncing(StateMachine):
         self.add_state(
             "TAKEOFF",
             Takeoff(),
-            transitions={SUCCEED:"SEARCH_ID", ABORT:"LAND"},
+            transitions={SUCCEED:"SEARCH", ABORT:"LAND"},
         )
         self.add_state(
-            "SEARCH_ID",
-            SearchId(),
-            transitions={SUCCEED:"SEARCH_LAND_BASE", ABORT:"LAND"},
-        )
-        self.add_state(
-            "SEARCH_LAND_BASE",
-            SearchLandBase(),
+            "SEARCH",
+            Search(),
             transitions={SUCCEED:"DESCEND", ABORT:"LAND"},
         )
         self.add_state(

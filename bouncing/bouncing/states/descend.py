@@ -27,4 +27,6 @@ class Descend(State):
             return ABORT
         yolo_detector: YOLODetector = blackboard["yolo_detector"]
 
+        yasmin.YASMIN_LOG_INFO("Start SEARCH.")
+
         return SUCCEED
