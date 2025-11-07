@@ -31,6 +31,9 @@ class Initialize(State):
         try:
             yasmin.YASMIN_LOG_INFO("Initializing mission...")
 
+            yasmin.YASMIN_LOG_INFO("Initialize Blackboard vars")
+            blackboard['target_base'] = {} # {class, symbol}
+
             yasmin.YASMIN_LOG_INFO("Initializing MavDrone...")
             blackboard["mavdrone"] = MavDrone(
                 node=YasminNode.get_instance(),
@@ -74,10 +77,6 @@ class Initialize(State):
             frame = image_handler.take_photo()
             yolo_detector.detect(frame)
             yasmin.YASMIN_LOG_INFO("Yolo detector ready.")
-
-            yasmin.YASMIN_LOG_INFO("Initialize detection in Blackboard")
-            blackboard['target_base'] = {} # {class, symbol}
-            blackboard['detections'] = [] # [{class, x1, y1, x2, y2, area, symbol}, ]
 
             yasmin.YASMIN_LOG_INFO("Mission successfully initialized. Cameras ready.")
             return SUCCEED

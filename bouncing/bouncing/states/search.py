@@ -22,17 +22,14 @@ class Search(State):
     def detect_number(self, frame):
         return
 
-    def check_succeed(blackboard):
-        target_base = blackboard['target_base']
-
-        if not target_base:
+    def check_succeed(self, blackboard):
+        if not self.target_base:
             return False
 
-        detections = blackboard['detections']
-        class_name = target_base.get('class')
-        symbol = target_base.get('symbol')
+        class_name = self.target_base.get('class')
+        symbol = self.target_base.get('symbol')
 
-        for detection in detections:
+        for detection in self.detections:
             if class_name == detection['class'] and symbol == detection['symbol']:
                 return True
         return False
@@ -60,6 +57,8 @@ class Search(State):
         yolo_detector: YOLODetector = blackboard["yolo_detector"]
 
         yasmin.YASMIN_LOG_INFO("Start SEARCH.")
+        self.target_base = {}
+        self.detections = []
         for point in SEARCH_POINTS:
             mavdrone.offboard_position(
                 x=point['x'],
@@ -93,12 +92,11 @@ class Search(State):
 
                 aruco = self.detect_aruco(crop)
                 if aruco:
-                    target_base = {
+                    self.target_base = {
                         'class': class_name,
                         'symbol': aruco,
                     }
-                    blackboard['target_base'] = target_base
-                    yasmin.YASMIN_LOG_INFO(f'Detecção {i}: TARGET_BASE = {target_base}')
+                    yasmin.YASMIN_LOG_INFO(f'Detecção {i}: TARGET_BASE = {self.target_base}')
 
                 else:
                     symbol = self.detect_number(crop)
@@ -114,10 +112,11 @@ class Search(State):
                         'y'      : point['y'] + vector[1],
                     }
 
-                    blackboard['detections'].append(detection)
+                    self.detections.append(detection)
                     yasmin.YASMIN_LOG_INFO(f"Detecção {i}: {detection}")
 
                 if self.check_succeed(blackboard):
+                    blackboard['target_base'] = self.target_base
                     return SUCCEED
 
         yasmin.YASMIN_LOG_WARN('ARUCO E/OU BASE NÃO ENCONTRADA')
