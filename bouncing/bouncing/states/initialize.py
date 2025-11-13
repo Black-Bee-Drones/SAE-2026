@@ -12,61 +12,72 @@ from mirela_sdk.image_processing.camera import (
 )
 from mirela_sdk.ai import YOLODetector
 
-from bouncing.constants import (
-    IS_INDOOR,
-    IMAGE_SOURCE,
-    CAMERA_WIDTH,
-    CAMERA_HEIGHT,
-    PIXELS_PER_DEGREE,
-    MODEL_PATH,
-    YOLO_CONFIDENCE_THRESHOLD,
-)
-
 
 class Initialize(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
+        self.IS_INDOOR = self.node.get_parameter_or('is_indoor', False)
+
+        self.CAMERA_IMAGE_SOURCE = self.node.get_parameter_or('camera_image_source', 'imx219')
+        self.CAMERA_WIDTH = self.node.get_parameter_or('camera_width', 1640)
+        self.CAMERA_HEIGHT = self.node.get_parameter_or('camera_height', 1232)
+        self.CAMERA_FLIP = self.node.get_parameter_or('camera_flip', 2)
+        self.CAMERA_PIXELS_PER_DEGREE = self.node.get_parameter_or('camera_pixels_per_degree', 25.8)
+
+        self.MODEL_PATH = self.node.get_parameter_or('model_path', 'models/yolov11n.pt')
+        self.MODEL_CONFIDENCE_THRESHOLD = self.node.get_parameter_or('model_confidence_threshold', 0.8)
+
+    @property
+    def node(self):
+        return YasminNode.get_instance()
 
     def execute(self, blackboard: Blackboard):
         try:
             yasmin.YASMIN_LOG_INFO("Initializing mission...")
+
+            yasmin.YASMIN_LOG_INFO("Initializing parameter...")
 
             yasmin.YASMIN_LOG_INFO("Initialize Blackboard vars")
             blackboard['target_base'] = {} # {class, symbol}
 
             yasmin.YASMIN_LOG_INFO("Initializing MavDrone...")
             blackboard["mavdrone"] = MavDrone(
-                node=YasminNode.get_instance(),
+                node=self.node,
                 mavros=False,
-                indoor=IS_INDOOR,
+                indoor=self.IS_INDOOR,
             )
             mavdrone: MavDrone = blackboard["mavdrone"]
 
             yasmin.YASMIN_LOG_INFO("Initializing ImageCalculus...")
             image_calculus = ImageCalculus()
             image_calculus.update_camera_resolution(
-                width = CAMERA_WIDTH,
-                height = CAMERA_HEIGHT,
+                width = self.CAMERA_WIDTH,
+                height = self.CAMERA_HEIGHT,
             )
-            image_calculus.update_pixels_per_degree(PIXELS_PER_DEGREE)
+            image_calculus.update_pixels_per_degree(self.CAMERA_PIXELS_PER_DEGREE)
             blackboard["image_calculus"] = image_calculus
 
             yasmin.YASMIN_LOG_INFO("Initializing ImageHandler...")
+            if self.CAMERA_IMAGE_SOURCE == 'imx219':
+                camera_config = IMX219Config(
+                    width=self.CAMERA_WIDTH,
+                    height=self.CAMERA_HEIGHT,
+                    flip=self.CAMERA_FLIP,
+                )
+
             blackboard["image_handler"] = ImageHandler(
-                node=YasminNode.get_instance(),
-                image_source=IMAGE_SOURCE,
-                config=IMX219Config(
-                    sensor_id=0, width=CAMERA_WIDTH, height=CAMERA_HEIGHT, flip=2
-                ),
+                node=self.node,
+                image_source=self.CAMERA_IMAGE_SOURCE,
+                config=camera_config,
             )
             image_handler: ImageHandler = blackboard["image_handler"]
             mavdrone.delay(1)
 
-            yasmin.YASMIN_LOG_INFO(f"Loading YOLO model from {MODEL_PATH}...")
+            yasmin.YASMIN_LOG_INFO(f"Loading YOLO model from {self.MODEL_PATH}...")
             
             blackboard["yolo_detector"] = YOLODetector(
-                model_source=MODEL_PATH,
-                confidence_threshold=YOLO_CONFIDENCE_THRESHOLD,
+                model_source=self.MODEL_PATH,
+                confidence_threshold=self.MODEL_CONFIDENCE_THRESHOLD,
                 device="auto",
                 auto_load=True,
             )

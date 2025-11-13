@@ -1,20 +1,23 @@
 import yasmin
 from yasmin import State
+from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from mirela_sdk.control.mavros import MavDrone
 from mirela_sdk.image_processing.camera import ImageHandler
 from mirela_sdk.ai import YOLODetector
 
-from bouncing.constants import (
-    DESCEND_ALTITUDE,
-    DESCEND_GO_TIMEOUT,
-)
-
 
 class Descend(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
+
+        self.DESCEND_ALTITUDE = self.node.get_parameter_or('descend_altitude', 3)
+        self.DESCEND_GO_TIMEOUT = self.node.get_parameter_or('descend_go_timeout', 30)
+
+    @property
+    def node(self):
+        return YasminNode.get_instance()
 
     def execute(self, blackboard):
         if ("mavdrone" not in blackboard) or not blackboard["mavdrone"]:
@@ -42,10 +45,10 @@ class Descend(State):
         mavdrone.offboard_position(
             x=target_base['x'],
             y=target_base['y'],
-            z=DESCEND_ALTITUDE,
+            z=self.DESCEND_ALTITUDE,
             yaw = 0.0,
             ground_reference=True,
-            timeout_sec=DESCEND_GO_TIMEOUT,
+            timeout_sec=self.DESCEND_GO_TIMEOUT,
             precision_radius=0.1,
             strategy="PID",
         )

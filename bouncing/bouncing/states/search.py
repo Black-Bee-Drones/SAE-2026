@@ -1,21 +1,27 @@
 import yasmin
 from yasmin import State
+from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from mirela_sdk.control.mavros import MavDrone
 from mirela_sdk.image_processing.camera import ImageHandler, ImageCalculus
 from mirela_sdk.ai import YOLODetector
 
-from bouncing.constants import (
-    SEARCH_ALTITUDE,
-    SEARCH_POINTS_TIMEOUT,
-    SEARCH_POINTS,
-)
-
 
 class Search(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
+        self.SEARCH_ALTITUDE = self.node.get_parameter_or('search_altitude', 5)
+        self.SEARCH_POINTS_TIMEOUT = self.node.get_parameter_or('search_points_timeout', 30)
+        self.SEARCH_POINTS = self.node.get_parameter_or('search.points', [
+            {'x': 0.0, 'y': 0.0},
+            {'x': 4.6, 'y': 0.0},
+            {'x': 4.6, 'y': 0.0},
+        ])
+
+    @property
+    def node(self):
+        return YasminNode.get_instance()
 
     def detect_aruco(self, frame):
         return
@@ -59,14 +65,14 @@ class Search(State):
         yasmin.YASMIN_LOG_INFO("Start SEARCH.")
         self.target_base = {}
         self.detections = []
-        for point in SEARCH_POINTS:
+        for point in self.SEARCH_POINTS:
             mavdrone.offboard_position(
                 x=point['x'],
                 y=point['y'],
-                z=SEARCH_ALTITUDE,
+                z=self.SEARCH_ALTITUDE,
                 yaw = 0.0,
                 ground_reference=True,
-                timeout_sec=SEARCH_POINTS_TIMEOUT,
+                timeout_sec=self.SEARCH_POINTS_TIMEOUT,
                 precision_radius=0.1,
                 strategy="PID",
             )
@@ -83,7 +89,7 @@ class Search(State):
                 center_y = (y2 - y1) / 2
 
                 vector = image_calculus.calculate_vector_from_drone_to_ground(
-                    altura = SEARCH_ALTITUDE,
+                    altura = self.SEARCH_ALTITUDE,
                     target_pixel = (center_x, center_y),
                 )
 

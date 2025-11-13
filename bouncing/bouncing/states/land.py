@@ -20,7 +20,6 @@ class Land(State):
             yasmin.YASMIN_LOG_INFO("Start land.")
 
             mavdrone.land()
-            mavdrone.delay(10)
 
             yasmin.YASMIN_LOG_INFO("Landed successfully.")
 

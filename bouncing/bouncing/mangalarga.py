@@ -57,7 +57,7 @@ def main():
 
     bouncing_sm = Bouncing()
 
-    YasminViewerPub("YASMIN_DEMO", bouncing_sm)
+    YasminViewerPub("mangalarga", bouncing_sm)
 
     try:
         yasmin.YASMIN_LOG_ERROR(bouncing_sm.validate())
