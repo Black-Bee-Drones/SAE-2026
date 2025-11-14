@@ -12,6 +12,7 @@ from bouncing.states import (
     Initialize,
     Takeoff,
     Search,
+    GoToBase,
     Descend,
     Land,
 )
@@ -34,6 +35,11 @@ class Bouncing(StateMachine):
         self.add_state(
             "SEARCH",
             Search(),
+            transitions={SUCCEED:"GO_TO_BASE", ABORT:"LAND"},
+        )
+        self.add_state(
+            "GO_TO_BASE",
+            GoToBase(),
             transitions={SUCCEED:"DESCEND", ABORT:"LAND"},
         )
         self.add_state(

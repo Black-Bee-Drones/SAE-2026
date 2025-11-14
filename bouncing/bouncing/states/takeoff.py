@@ -22,40 +22,26 @@ class Takeoff(State):
     def node(self):
         return YasminNode.get_instance()
 
-    def execute(self, blackboard: Blackboard):
-        if "mavdrone" not in blackboard:
-            yasmin.YASMIN_LOG_ERROR("MavDrone not available in Takeoff state.")
-            return ABORT
-        mavdrone: MavDrone = blackboard["mavdrone"]
+    @property
+    def __state_name__(self):
+        return f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
 
+    def execute(self, blackboard: Blackboard):
+        if 'mavdrone' not in blackboard:
+            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: MavDrone not available.')
+            return ABORT
+        mavdrone: MavDrone = blackboard['mavdrone']
+
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Start.')
+
+        yasmin.YASMIN_LOG_INFO(f'Taking off to altitude: {self.TAKEOFF_ALTITUDE}m...')
         try:
-            yasmin.YASMIN_LOG_INFO(f"Taking off to altitude: {self.TAKEOFF_ALTITUDE}m...")
             mavdrone.arm_takeoff(self.TAKEOFF_ALTITUDE)
             mavdrone.delay(self.TAKEOFF_SLEEP)
 
-            start_time = time.time()
-            while time.time() - start_time < self.TAKEOFF_TIMEOUT:
-                mavdrone.delay(0.1)
-
-                current_alt = mavdrone.get_rng_alt.range
-                yasmin.YASMIN_LOG_INFO(f"Current altitude: {current_alt:.2f}m")
-
-                altitude_error = self.TAKEOFF_ALTITUDE - current_alt
-
-                if abs(altitude_error) < self.TAKEOFF_ALTITUDE_TOLERANCE:
-                    yasmin.YASMIN_LOG_INFO("Takeoff altitude reached. Ready to start search pattern.")
-
-                    mavdrone.offboard_velocity(0.0, 0.0, 0.0, 0.0)
-                    mavdrone.delay(2)
-
-                    return SUCCEED
-
-                correction_velocity = max(-0.5, min(0.5, 0.3 * altitude_error))
-                mavdrone.offboard_velocity(0.0, 0.0, correction_velocity, 0.0)
-
-            yasmin.YASMIN_LOG_ERROR("Takeoff timeout reached.")
-            return ABORT
-
         except Exception as e:
-            yasmin.YASMIN_LOG_ERROR(f"Takeoff failed: {e}")
+            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: Taking off failed: {e}.')
             return ABORT
+
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Completed successfully.')
+        return SUCCEED

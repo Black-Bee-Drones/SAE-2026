@@ -10,21 +10,24 @@ class Land(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
 
-    def execute(self, blackboard: Blackboard):
-        if ("mavdrone" not in blackboard) or not blackboard["mavdrone"]:
-            yasmin.YASMIN_LOG_ERROR("Mavdrone not available in Land state.")
+    @property
+    def __state_name__(self):
+        return f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+
+    def execute(self, blackboard):
+        if ('mavdrone' not in blackboard) or not blackboard['mavdrone']:
+            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: MavDrone not available.')
             return ABORT
-        mavdrone: MavDrone = blackboard["mavdrone"]
+        mavdrone: MavDrone = blackboard['mavdrone']
+
+        yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: Start.')
 
         try:
-            yasmin.YASMIN_LOG_INFO("Start land.")
-
             mavdrone.land()
 
-            yasmin.YASMIN_LOG_INFO("Landed successfully.")
-
-            return SUCCEED
-
         except Exception as e:
-            yasmin.YASMIN_LOG_ERROR(f"Landing failed: {e}")
+            yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Landing failed: {e}.')
             return ABORT
+
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Completed successfully.')
+        return SUCCEED

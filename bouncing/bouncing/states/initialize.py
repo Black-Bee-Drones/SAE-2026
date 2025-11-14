@@ -10,7 +10,8 @@ from mirela_sdk.image_processing.camera import (
     ImageHandler,
     IMX219Config,
 )
-from mirela_sdk.ai import YOLODetector
+
+from bouncing.utils import Detector
 
 
 class Initialize(State):
@@ -25,73 +26,75 @@ class Initialize(State):
         self.CAMERA_PIXELS_PER_DEGREE = self.node.get_parameter_or('camera_pixels_per_degree', 25.8)
 
         self.MODEL_PATH = self.node.get_parameter_or('model_path', 'models/yolov11n.pt')
+        self.MODEL_NUMBER_PATH = self.node.get_parameter_or('model_number_path', 'models/yolov11n.pt')
         self.MODEL_CONFIDENCE_THRESHOLD = self.node.get_parameter_or('model_confidence_threshold', 0.8)
 
     @property
     def node(self):
         return YasminNode.get_instance()
 
+    @property
+    def __state_name__(self):
+        return f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+
     def execute(self, blackboard: Blackboard):
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Start.')
+
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Initializing \"target_base\"...')
+        blackboard['target_base'] = {} # {class, symbol}
+
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Initializing MavDrone...')
         try:
-            yasmin.YASMIN_LOG_INFO("Initializing mission...")
-
-            yasmin.YASMIN_LOG_INFO("Initializing parameter...")
-
-            yasmin.YASMIN_LOG_INFO("Initialize Blackboard vars")
-            blackboard['target_base'] = {} # {class, symbol}
-
-            yasmin.YASMIN_LOG_INFO("Initializing MavDrone...")
-            blackboard["mavdrone"] = MavDrone(
+            blackboard['mavdrone'] = MavDrone(
                 node=self.node,
                 mavros=False,
                 indoor=self.IS_INDOOR,
             )
-            mavdrone: MavDrone = blackboard["mavdrone"]
+        except Exception as e:
+            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: Mavdrone failed: {e}.')
+            return ABORT
 
-            yasmin.YASMIN_LOG_INFO("Initializing ImageCalculus...")
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Initializing ImageCalculus...')
+        try:
             image_calculus = ImageCalculus()
             image_calculus.update_camera_resolution(
                 width = self.CAMERA_WIDTH,
                 height = self.CAMERA_HEIGHT,
             )
             image_calculus.update_pixels_per_degree(self.CAMERA_PIXELS_PER_DEGREE)
-            blackboard["image_calculus"] = image_calculus
+            blackboard['image_calculus'] = image_calculus
+        except Exception as e:
+            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: ImageCalculus failed: {e}.')
+            return ABORT
 
-            yasmin.YASMIN_LOG_INFO("Initializing ImageHandler...")
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Initializing ImageHandler...')
+        try:
             if self.CAMERA_IMAGE_SOURCE == 'imx219':
                 camera_config = IMX219Config(
                     width=self.CAMERA_WIDTH,
                     height=self.CAMERA_HEIGHT,
                     flip=self.CAMERA_FLIP,
                 )
-
-            blackboard["image_handler"] = ImageHandler(
+            blackboard['image_handler'] = ImageHandler(
                 node=self.node,
                 image_source=self.CAMERA_IMAGE_SOURCE,
                 config=camera_config,
             )
-            image_handler: ImageHandler = blackboard["image_handler"]
-            mavdrone.delay(1)
-
-            yasmin.YASMIN_LOG_INFO(f"Loading YOLO model from {self.MODEL_PATH}...")
-            
-            blackboard["yolo_detector"] = YOLODetector(
-                model_source=self.MODEL_PATH,
-                confidence_threshold=self.MODEL_CONFIDENCE_THRESHOLD,
-                device="auto",
-                auto_load=True,
-            )
-            yolo_detector: YOLODetector = blackboard["yolo_detector"]
-
-            yasmin.YASMIN_LOG_INFO("Warming up YOLO model...")
-            image_handler.open()
-            frame = image_handler.take_photo()
-            yolo_detector.detect(frame)
-            yasmin.YASMIN_LOG_INFO("Yolo detector ready.")
-
-            yasmin.YASMIN_LOG_INFO("Mission successfully initialized. Cameras ready.")
-            return SUCCEED
-
         except Exception as e:
-            yasmin.YASMIN_LOG_ERROR(f"Failed to initialize: {e}")
+            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: ImageHandler failed: {e}.')
             return ABORT
+
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Initializing Detector...')
+        try:
+            blackboard['detector'] = Detector(
+                model_path = self.MODEL_PATH,
+                model_number_path = self.MODEL_NUMBER_PATH,
+                model_confidence_threshold = self.MODEL_CONFIDENCE_THRESHOLD,
+                image_calculus = image_calculus,
+            )
+        except Exception as e:
+            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: Detector failed: {e}.')
+            return ABORT
+
+        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Completed successfully.')
+        return SUCCEED

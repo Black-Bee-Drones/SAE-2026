@@ -9,6 +9,7 @@ mangalarga:
     camera_pixels_per_degree: 25.8
 
     model_path: 'models/yolov11n.pt'
+    model_number_path: 'models/yolov11n.pt'
     model_confidence_threshold: 0.8
 
     takeoff_altitude: 3.0
@@ -23,5 +24,9 @@ mangalarga:
       - {x: 4.6, y: 0.0}
       - {x: 4.6, y: 0.0}
 
-    descend_altitude: 3
-    descend_go_timeout: 30
+    go_to_base_altitude: 3
+    go_to_base_number_photo: 3
+    go_to_base_timeout: 30
+
+    descend_stap_size: 0.5
+    descend_timeout: 10
