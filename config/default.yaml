@@ -28,5 +28,9 @@ mangalarga:
     go_to_base_number_photo: 3
     go_to_base_timeout: 30
 
-    descend_stap_size: 0.5
+    descend_vertical_speed: 0.3
     descend_timeout: 10
+
+    controler_p_xy: 0.5
+    controler_i_xy: 0.0
+    controler_d_xy: 0.0

@@ -1,17 +1,17 @@
 import yasmin
 from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
-from yasmin_ros.basic_outcomes import SUCCEED, ABORT
+from yasmin_ros.basic_outcomes import SUCCEED, FAIL, ABORT
 
 from mirela_sdk.control.mavros import MavDrone
-from mirela_sdk.image_processing.camera import ImageHandler, ImageCalculus
+from mirela_sdk.image_processing.camera import ImageHandler
 
 from bouncing.utils import Detector
 
 
 class Search(State):
     def __init__(self):
-        super().__init__(outcomes=[SUCCEED, ABORT])
+        super().__init__(outcomes=[SUCCEED, FAIL, ABORT])
         self.SEARCH_ALTITUDE = self.node.get_parameter_or('search_altitude', 5)
         self.SEARCH_POINTS_TIMEOUT = self.node.get_parameter_or('search_points_timeout', 30)
         self.SEARCH_POINTS = self.node.get_parameter_or('search.points', [
@@ -33,11 +33,6 @@ class Search(State):
             yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: MavDrone not available.')
             return ABORT
         mavdrone: MavDrone = blackboard['mavdrone']
-
-        if ('image_calculus' not in blackboard) or not blackboard['image_calculus']:
-            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: ImageCalculus not available.')
-            return ABORT
-        image_calculus: ImageCalculus = blackboard['image_calculus']
 
         if ('image_handler' not in blackboard) or not blackboard['image_handler']:
             yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: ImageHandler not available.')
@@ -85,7 +80,7 @@ class Search(State):
                     return SUCCEED
 
         yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: Aruco/base not found.')
-        return ABORT
+        return FAIL
 
     def get_target_base(self, target_base, detections):
         if target_base is None:

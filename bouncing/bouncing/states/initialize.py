@@ -6,7 +6,6 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from mirela_sdk.control.mavros import MavDrone
 from mirela_sdk.image_processing.camera import (
-    ImageCalculus,
     ImageHandler,
     IMX219Config,
 )
@@ -52,19 +51,6 @@ class Initialize(State):
             )
         except Exception as e:
             yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: Mavdrone failed: {e}.')
-            return ABORT
-
-        yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Initializing ImageCalculus...')
-        try:
-            image_calculus = ImageCalculus()
-            image_calculus.update_camera_resolution(
-                width = self.CAMERA_WIDTH,
-                height = self.CAMERA_HEIGHT,
-            )
-            image_calculus.update_pixels_per_degree(self.CAMERA_PIXELS_PER_DEGREE)
-            blackboard['image_calculus'] = image_calculus
-        except Exception as e:
-            yasmin.YASMIN_LOG_ERROR(f'{self.__state_name__}: ImageCalculus failed: {e}.')
             return ABORT
 
         yasmin.YASMIN_LOG_INFO(f'{self.__state_name__}: Initializing ImageHandler...')

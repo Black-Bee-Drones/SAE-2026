@@ -92,3 +92,6 @@ class Detector:
             symbol_detection = self.detect_symbol(figure_detection.pop('crop'))
             figure_detection.update(symbol_detection)
             yield figure_detection
+
+    def detect_all(self, frame, position=None):
+        return [d for d in self.detect(frame, position)]
