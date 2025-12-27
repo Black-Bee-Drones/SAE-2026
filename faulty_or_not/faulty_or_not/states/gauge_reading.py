@@ -32,6 +32,8 @@ class GaugeReading(State):
             return ABORT
         
         # Initialize camera
+        # TODO: Change the image source to the proper mirela-sdk handler
+
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             self.node.get_logger().error("Could not open webcam")
