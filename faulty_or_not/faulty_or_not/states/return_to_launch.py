@@ -1,5 +1,5 @@
 from yasmin import State
-from mirela_sdk.control.mavros.mavros_api import MavDrone
+from mirela_sdk.control.mavros.drone import MavrosDrone
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 from yasmin import Blackboard
 import yasmin
@@ -9,14 +9,14 @@ from ..parameters import TAKEOFF_ALTITUDE
 class ReturnToLaunch(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
-        self.drone : MavDrone = None
+        self.drone : MavrosDrone = None
 
     def execute(self, blackboard : Blackboard):
         if "drone" not in blackboard:
             yasmin.YASMIN_LOG_ERROR("Could not retrieve MAVDRONE instance from blackboard.")
             return ABORT
         
-        self.drone: MavDrone = blackboard["drone"]
+        self.drone: MavrosDrone = blackboard["drone"]
 
         yasmin.YASMIN_LOG_INFO("Returning to launch...")
         try:

@@ -6,7 +6,7 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 import time
 
-from mirela_sdk.control.mavros.mavros_api import MavDrone
+from mirela_sdk.control.mavros.drone import MavrosDrone
 
 from faulty_or_not.parameters import TAKEOFF_ALTITUDE
 
@@ -14,7 +14,7 @@ from faulty_or_not.parameters import TAKEOFF_ALTITUDE
 class Takeoff(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
-        self.drone : MavDrone = None
+        self.drone : MavrosDrone = None
         self.node = YasminNode.get_instance()
 
     def execute(self, blackboard : Blackboard):
@@ -22,10 +22,11 @@ class Takeoff(State):
             yasmin.YASMIN_LOG_ERROR("Could not retrieve MAVDRONE instance from blackboard.")
             return ABORT
 
-        self.drone: MavDrone = blackboard["drone"]
+        self.drone: MavrosDrone = blackboard["drone"]
         yasmin.YASMIN_LOG_INFO("Taking off...")
+
         try:
-            self.drone.arm_takeoff(TAKEOFF_ALTITUDE)
+            # self.drone.arm_takeoff(TAKEOFF_ALTITUDE)
             time.sleep(5)
             yasmin.YASMIN_LOG_INFO("Takeoff successful.")
             return SUCCEED

@@ -4,13 +4,15 @@ from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.control.mavros.mavros_api import MavDrone
+from mirela_sdk.control.mavros.drone import MavrosDrone
+
+from mirela_sdk.control.types import MoveReference
 
 
 class Navigation(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
-        self.drone : MavDrone = None
+        self.drone : MavrosDrone = None
         self.node = YasminNode.get_instance()
 
     def execute(self, blackboard : Blackboard):
@@ -24,5 +26,5 @@ class Navigation(State):
 
         x,y,z = locations[control_index]
 
-        drone.offboard_position(x=x,y=y,z=z,ground_reference=True)
+        drone.move_to(x=x,y=y,z=z,reference=MoveReference.WORLD)
         return SUCCEED

@@ -5,7 +5,7 @@ from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.ai import YOLODetector, DetectionResult
+from mirela_sdk.ai.detection.models.ultralytics import UltralyticsModel
 
 
 class GaugeReading(State):
@@ -16,9 +16,11 @@ class GaugeReading(State):
         
         # Initialize YOLODetector from Mirela SDK
         try:
-            self.detector = YOLODetector(model_source=model_path, 
-                                        confidence_threshold=self.confidence_threshold,
-                                        image_size=1280)
+            self.detector = UltralyticsModel(model_name=model_path)
+            self.detector.load_model()
+            # self.detector = YOLODetector(model_source=model_path, 
+            #                             confidence_threshold=self.confidence_threshold,
+            #                             image_size=1280)
         except Exception as e:
             self.node.get_logger().error(f"Error loading YOLODetector: {e}")
             self.detector = None
@@ -62,8 +64,8 @@ class GaugeReading(State):
                 frame_count += 1
                 
                 # Execute detection
-                detections = self.detector.detect(frame)
-                
+                detections = self.detector.detect(frame,conf=0.75)
+
                 # Process current frame detections
                 best_detection = None
                 best_confidence = 0.0

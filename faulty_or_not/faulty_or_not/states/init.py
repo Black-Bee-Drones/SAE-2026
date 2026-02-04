@@ -9,13 +9,16 @@ from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.control.mavros.mavros_api import MavDrone
+from mirela_sdk.control.mavros.drone import MavrosDrone, MavrosConfig
 from ..parameters import LOCATIONS
 
 class Init(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT, "GROUND_MONITOR"])
-        self.drone : MavDrone = None
+
+        self.config = MavrosConfig()
+
+        self.drone : MavrosDrone = None
         self.coords_file = os.path.expanduser("~/.faulty_or_not_mission_coords.json")
 
     def save_debug_coordinates(self, locations):
@@ -184,7 +187,7 @@ class Init(State):
             blackboard["control_index"] = 0
             blackboard["locations"] = locations
 
-            self.drone = MavDrone(node=YasminNode.get_instance())
+            self.drone = MavrosDrone(config=self.config, node=YasminNode.get_instance())
             blackboard["drone"] = self.drone
 
             return SUCCEED
