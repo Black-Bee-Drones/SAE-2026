@@ -9,6 +9,8 @@ from mirela_sdk.ai.detection.models.ultralytics import UltralyticsModel
 from mirela_sdk.vision.camera.handler import ImageHandler
 
 from faulty_or_not.parameters import IMAGE_SOURCE
+from mirela_sdk.vision.camera.config import OpenCVConfig
+
 
 class GaugeReading(State):
     def __init__(self, model_path, confidence_threshold=0.5):
@@ -37,7 +39,7 @@ class GaugeReading(State):
         
         # Initialize camera handler
 
-        handler = ImageHandler(node=self.node, image_source=IMAGE_SOURCE)
+        handler = ImageHandler(config=OpenCVConfig(device_index=1), node=self.node, image_source=IMAGE_SOURCE)
         handler.run()
             
         # Configuration
