@@ -26,8 +26,8 @@ class Takeoff(State):
         yasmin.YASMIN_LOG_INFO("Taking off...")
 
         try:
-            # self.drone.arm_takeoff(TAKEOFF_ALTITUDE)
-            time.sleep(5)
+            self.drone.arm()
+            self.drone.takeoff(TAKEOFF_ALTITUDE)
             yasmin.YASMIN_LOG_INFO("Takeoff successful.")
             return SUCCEED
         except Exception as e:
