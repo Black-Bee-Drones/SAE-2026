@@ -21,7 +21,7 @@ class AudioFeedback(State):
         if "inference_image_publisher" not in blackboard:
             blackboard["inference_image_publisher"] = self.node.create_publisher(CompressedImage, "/gauge/inference_image/compressed", 10)
 
-        gauge_reading = blackboard.get("gauge_reading", -1)  # Class (0-5), default -1 if not found
+        gauge_reading = blackboard["gauge_reading"]  # Class (0-5), default -1 if not found
         
         if gauge_reading != -1:
 
