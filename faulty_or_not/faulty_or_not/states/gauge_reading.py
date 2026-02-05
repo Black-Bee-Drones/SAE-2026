@@ -55,7 +55,9 @@ class GaugeReading(State):
         
         try:
             while (time.time() - start_time) < max_duration:
-                frame = handler.img()
+                frame = handler.img
+                if not frame:
+                    continue
 
                 height, width = frame.shape[:2]
                 if height > width:
@@ -65,8 +67,6 @@ class GaugeReading(State):
                     diff = width - height
                     frame = frame[:, diff // 2:diff // 2 + height]
 
-                if not frame:
-                    continue
                     
                 frame_count += 1
                 
