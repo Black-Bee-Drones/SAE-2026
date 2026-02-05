@@ -6,7 +6,9 @@ from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from mirela_sdk.ai.detection.models.ultralytics import UltralyticsModel
+from mirela_sdk.vision.camera.handler import ImageHandler
 
+from faulty_or_not.parameters import IMAGE_SOURCE
 
 class GaugeReading(State):
     def __init__(self, model_path, confidence_threshold=0.5):
@@ -33,13 +35,10 @@ class GaugeReading(State):
             self.node.get_logger().error("YOLODetector was not loaded")
             return ABORT
         
-        # Initialize camera
-        # TODO: Change the image source to the proper mirela-sdk handler
+        # Initialize camera handler
 
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            self.node.get_logger().error("Could not open webcam")
-            return ABORT
+        handler = ImageHandler(node=self.node, image_source=IMAGE_SOURCE)
+        handler.run()
             
         # Configuration
         max_duration = 15.0  # Maximum 15 seconds
@@ -56,9 +55,17 @@ class GaugeReading(State):
         
         try:
             while (time.time() - start_time) < max_duration:
-                # Capture frame
-                ret, frame = cap.read()
-                if not ret:
+                frame = handler.img()
+
+                height, width = frame.shape[:2]
+                if height > width:
+                    diff = height - width
+                    frame = frame[diff // 2:diff // 2 + width, :]
+                elif width > height:
+                    diff = width - height
+                    frame = frame[:, diff // 2:diff // 2 + height]
+
+                if not frame:
                     continue
                     
                 frame_count += 1
@@ -92,9 +99,8 @@ class GaugeReading(State):
                     if best_confidence > best_confidence_overall:
                         best_detection_overall = best_detection
                         best_confidence_overall = best_confidence
-                        # Create DetectionResult with only the best detection
-                        best_result = DetectionResult(detections=[best_detection])
-                        last_inference_image = self.detector.draw_detections(frame, best_result)
+                        # Pass a list with the best detection to draw_detections
+                        last_inference_image = self.detector.draw_detections(frame, [best_detection])
                     
                     self.node.get_logger().info(
                         f"Frame {frame_count}: Class {class_id}, Conf {best_confidence:.3f}, "
@@ -116,7 +122,7 @@ class GaugeReading(State):
                 time.sleep(0.1)
                 
         finally:
-            cap.release()
+            handler.cleanup()
         
         # Final analysis
         elapsed_time = time.time() - start_time
