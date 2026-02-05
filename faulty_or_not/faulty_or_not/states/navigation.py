@@ -19,7 +19,7 @@ class Navigation(State):
         if "drone" not in blackboard:
             yasmin.YASMIN_LOG_ERROR("Could not retrieve MAVDRONE instance from blackboard.")
             return ABORT
-        drone: MavDrone = blackboard["drone"]
+        drone: MavrosDrone = blackboard["drone"]
 
         locations = blackboard["locations"]
         control_index = blackboard["control_index"]
