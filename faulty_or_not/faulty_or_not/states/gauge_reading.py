@@ -12,7 +12,7 @@ from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
 
 
 class GaugeReading(State):
-    def __init__(self, model_path, confidence_threshold=0.5):
+    def __init__(self, model_path, confidence_threshold=0.8):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.node = YasminNode.get_instance()
         self.confidence_threshold = confidence_threshold
