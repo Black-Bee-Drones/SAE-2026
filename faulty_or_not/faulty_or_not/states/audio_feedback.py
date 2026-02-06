@@ -31,15 +31,8 @@ class AudioFeedback(State):
             msg.data = packed_data
             publisher.publish(msg)
 
-        # Publish the compressed image
-        image_publisher = blackboard["inference_image_publisher"]
-        image_publisher.publish(buffer.tobytes())
-
-        # Compress OpenCV image to JPEG
-        _, buffer = cv2.imencode('.jpg', blackboard["inference_image_cv"], 
-                                [cv2.IMWRITE_JPEG_QUALITY, 85])  # 85% quality
-        
-        cv2.imwrite(f"/tmp/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
+        if "inference_image_cv" in blackboard:
+            cv2.imwrite(f"/tmp/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
             
 
         # Wait end of communication
