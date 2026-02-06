@@ -45,7 +45,7 @@ class GaugeReading(State):
             fps=30,
             fourcc="MJPG",
             buffer_size=1,
-            threaded=True,
+            threaded=False,
         )
 
         self.camera = OpenCVCam(config)
