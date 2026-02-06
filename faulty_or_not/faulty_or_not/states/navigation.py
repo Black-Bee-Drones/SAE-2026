@@ -26,5 +26,5 @@ class Navigation(State):
 
         x,y,z = locations[control_index]
 
-        drone.move_to(x=x,y=y,z=z,reference=MoveReference.WORLD)
+        drone.move_to(x=x,y=y,z=z,reference=MoveReference.TAKEOFF)
         return SUCCEED
