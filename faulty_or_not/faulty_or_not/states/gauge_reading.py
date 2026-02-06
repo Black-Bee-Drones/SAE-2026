@@ -49,8 +49,8 @@ class GaugeReading(State):
 
 
         # Configuration
-        max_duration = 30.0  # Maximum 15 seconds
-        consecutive_limit = 3  # 12 equal consecutive detections
+        max_duration = 30.0  
+        consecutive_limit = 3 
         
         # System state
         start_time = time.time()
