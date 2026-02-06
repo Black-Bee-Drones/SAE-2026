@@ -1,5 +1,4 @@
 from std_msgs.msg import UInt8
-from sensor_msgs.msg import CompressedImage
 import cv2
 from yasmin import Blackboard
 from yasmin import State
@@ -17,9 +16,6 @@ class AudioFeedback(State):
 
         if "gauge_publisher" not in blackboard:
             blackboard["gauge_publisher"] = self.node.create_publisher(UInt8, "/gauge/reading", 10)
-            
-        if "inference_image_publisher" not in blackboard:
-            blackboard["inference_image_publisher"] = self.node.create_publisher(CompressedImage, "/gauge/inference_image/compressed", 10)
 
         gauge_reading = blackboard["gauge_reading"]  # Class (0-5), default -1 if not found
         
@@ -34,22 +30,17 @@ class AudioFeedback(State):
             msg = UInt8()
             msg.data = packed_data
             publisher.publish(msg)
+
+        # Publish the compressed image
+        image_publisher = blackboard["inference_image_publisher"]
+        image_publisher.publish(buffer.tobytes())
+
+        # Compress OpenCV image to JPEG
+        _, buffer = cv2.imencode('.jpg', blackboard["inference_image_cv"], 
+                                [cv2.IMWRITE_JPEG_QUALITY, 85])  # 85% quality
         
-        # Publish the inferred image with bounding box (if available)
-        if "inference_image_cv" in blackboard and blackboard["inference_image_cv"] is not None:
-            image_publisher = blackboard["inference_image_publisher"]
+        cv2.imwrite(f"/tmp/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
             
-            # Compress OpenCV image to JPEG
-            _, buffer = cv2.imencode('.jpg', blackboard["inference_image_cv"], 
-                                   [cv2.IMWRITE_JPEG_QUALITY, 85])  # 85% quality
-            
-            # Create compressed message
-            compressed_msg = CompressedImage()
-            compressed_msg.header.stamp = self.node.get_clock().now().to_msg()
-            compressed_msg.format = "jpeg"
-            compressed_msg.data = buffer.tobytes()
-            
-            image_publisher.publish(compressed_msg)
 
         # Wait end of communication
         time.sleep(5)
