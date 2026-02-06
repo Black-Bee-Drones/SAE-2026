@@ -46,7 +46,7 @@ class FaultyOrNot(StateMachine):
         self.add_state(
             "AUDIO_FEEDBACK",
             AudioFeedback(),
-            transitions={SUCCEED:"GAUGE_READING", "END":"RETURN_TO_LAUNCH"},
+            transitions={SUCCEED:"NAVIGATION", "END":"RETURN_TO_LAUNCH"},
         )
         self.add_state(
             "RETURN_TO_LAUNCH",
