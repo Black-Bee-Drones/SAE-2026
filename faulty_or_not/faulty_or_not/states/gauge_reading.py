@@ -8,7 +8,9 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 from mirela_sdk.ai.detection.models.ultralytics import UltralyticsModel
 from mirela_sdk.vision.camera.handler import ImageHandler
 
-from faulty_or_not.parameters import IMAGE_SOURCE
+from mirela_sdk.vision.camera.config import OpenCVConfig
+from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
+
 # from mirela_sdk.vision.camera.config import OpenCVConfig
 # from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
 
@@ -28,39 +30,32 @@ class GaugeReading(State):
             self.node.get_logger().error(f"Error loading YOLODetector: {e}")
             self.detector = None
 
-        
-    def frame_callback(self, image):
-        self.frame = image
-
     def execute(self, blackboard: Blackboard):
         """Execute capture and inference with timeout and consecutive detections"""
         
         if self.detector is None:
             self.node.get_logger().error("YOLODetector was not loaded")
             return ABORT
-        
 
-
-
-
-
-
-        # Initialize camera handler
-        image_handler = ImageHandler(
-            node=self.node,
-            image_source=IMAGE_SOURCE,
-            image_processing_callback=self.frame_callback
+        config = OpenCVConfig(
+            name="webcam",
+            device_index=0,
+            width=640,
+            height=640,
+            fps=30,
+            fourcc="MJPG",
+            buffer_size=1,
+            threaded=True,
         )
-        image_handler.run() 
+
+        self.camera = OpenCVCam(config)
+        self.camera.start()
             
 
 
-
-
-
         # Configuration
-        max_duration = 300.0  # Maximum 15 seconds
-        consecutive_limit = 12  # 12 equal consecutive detections
+        max_duration = 30.0  # Maximum 15 seconds
+        consecutive_limit = 3  # 12 equal consecutive detections
         
         # System state
         start_time = time.time()
@@ -73,11 +68,12 @@ class GaugeReading(State):
         
         try:
             while (time.time() - start_time) < max_duration:
-                if self.frame is None:
+                frame = self.camera.get_frame()
+
+                if frame is None:
+                    print("Frame is None")
                     continue
 
-                # Agora usa self.frame corretamente
-                frame = self.frame.copy()  # Cópia para evitar race conditions
                 height, width = frame.shape[:2]
                 if height > width:
                     diff = height - width
@@ -98,6 +94,8 @@ class GaugeReading(State):
                 self.node.get_logger().info(
                     f"Frame {frame_count}: {num_detections} detection(s) found"
                 )
+                cv2.imwrite(f"/tmp/gauge_reading_frame_{frame_count}.jpg", frame)
+
 
                 # Process current frame detections
                 best_detection = None
@@ -154,7 +152,7 @@ class GaugeReading(State):
                 time.sleep(0.1)
                 
         finally:
-            image_handler.cleanup()
+            self.camera.close()
         
         # Final analysis
         elapsed_time = time.time() - start_time

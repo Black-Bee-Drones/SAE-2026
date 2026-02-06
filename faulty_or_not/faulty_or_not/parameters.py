@@ -5,7 +5,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 
-IMAGE_SOURCE = "imx219"
+IMAGE_SOURCE = "webcam"
 
 LOCATIONS = [(-6,2,1.7),(0,-2.5,1.7),(5,2.5,1.7)]
 
