@@ -6,13 +6,9 @@ from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from mirela_sdk.ai.detection.models.ultralytics import UltralyticsModel
-from mirela_sdk.vision.camera.handler import ImageHandler
 
 from mirela_sdk.vision.camera.config import OpenCVConfig
 from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
-
-# from mirela_sdk.vision.camera.config import OpenCVConfig
-# from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
 
 
 class GaugeReading(State):
