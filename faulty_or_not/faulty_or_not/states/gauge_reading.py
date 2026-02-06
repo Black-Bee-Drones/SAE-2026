@@ -9,7 +9,8 @@ from mirela_sdk.ai.detection.models.ultralytics import UltralyticsModel
 from mirela_sdk.vision.camera.handler import ImageHandler
 
 from faulty_or_not.parameters import IMAGE_SOURCE
-from mirela_sdk.vision.camera.config import OpenCVConfig
+# from mirela_sdk.vision.camera.config import OpenCVConfig
+# from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
 
 
 class GaugeReading(State):
@@ -17,18 +18,19 @@ class GaugeReading(State):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.node = YasminNode.get_instance()
         self.confidence_threshold = confidence_threshold
+        self.frame = None  # Unificado
         
         # Initialize YOLODetector from Mirela SDK
         try:
             self.detector = UltralyticsModel(model_name=model_path)
             self.detector.load_model()
-            # self.detector = YOLODetector(model_source=model_path, 
-            #                             confidence_threshold=self.confidence_threshold,
-            #                             image_size=1280)
         except Exception as e:
             self.node.get_logger().error(f"Error loading YOLODetector: {e}")
             self.detector = None
+
         
+    def frame_callback(self, image):
+        self.frame = image
 
     def execute(self, blackboard: Blackboard):
         """Execute capture and inference with timeout and consecutive detections"""
@@ -37,13 +39,27 @@ class GaugeReading(State):
             self.node.get_logger().error("YOLODetector was not loaded")
             return ABORT
         
-        # Initialize camera handler
 
-        handler = ImageHandler(config=OpenCVConfig(device_index=1), node=self.node, image_source=IMAGE_SOURCE)
-        handler.run()
+
+
+
+
+
+        # Initialize camera handler
+        image_handler = ImageHandler(
+            node=self.node,
+            image_source=IMAGE_SOURCE,
+            image_processing_callback=self.frame_callback
+        )
+        image_handler.run() 
             
+
+
+
+
+
         # Configuration
-        max_duration = 15.0  # Maximum 15 seconds
+        max_duration = 300.0  # Maximum 15 seconds
         consecutive_limit = 12  # 12 equal consecutive detections
         
         # System state
@@ -57,10 +73,11 @@ class GaugeReading(State):
         
         try:
             while (time.time() - start_time) < max_duration:
-                frame = handler.img
-                if not frame:
+                if self.frame is None:
                     continue
 
+                # Agora usa self.frame corretamente
+                frame = self.frame.copy()  # Cópia para evitar race conditions
                 height, width = frame.shape[:2]
                 if height > width:
                     diff = height - width
@@ -73,14 +90,27 @@ class GaugeReading(State):
                 frame_count += 1
                 
                 # Execute detection
-                detections = self.detector.detect(frame,conf=0.75)
+                detection_result = self.detector.detect(frame, conf=0.75)
+                
+                # Log detection status
+                detections = detection_result if isinstance(detection_result, list) else detection_result.detections
+                num_detections = len(detections)
+                self.node.get_logger().info(
+                    f"Frame {frame_count}: {num_detections} detection(s) found"
+                )
 
                 # Process current frame detections
                 best_detection = None
                 best_confidence = 0.0
                 
+                # Iterar sobre as detecções
                 for detection in detections:
-                    confidence = detection.confidence if hasattr(detection, 'confidence') else detection['confidence']
+                    confidence = detection.confidence
+                    class_id = detection.class_id
+                    
+                    self.node.get_logger().info(
+                        f"  Detection: Class {class_id}, Confidence {confidence:.3f}"
+                    )
                     
                     if confidence > self.confidence_threshold and confidence > best_confidence:
                         best_detection = detection
@@ -88,7 +118,7 @@ class GaugeReading(State):
                 
                 # Update overall best detection
                 if best_detection is not None:
-                    class_id = best_detection.class_id if hasattr(best_detection, 'class_id') else best_detection['class_id']
+                    class_id = best_detection.class_id
                     
                     # Check consecutive detections
                     if class_id == last_class_id:
@@ -101,8 +131,8 @@ class GaugeReading(State):
                     if best_confidence > best_confidence_overall:
                         best_detection_overall = best_detection
                         best_confidence_overall = best_confidence
-                        # Pass a list with the best detection to draw_detections
-                        last_inference_image = self.detector.draw_detections(frame, [best_detection])
+                        # Pass the detection_result or list to draw_detections
+                        last_inference_image = self.detector.draw_detections(frame, detection_result)
                     
                     self.node.get_logger().info(
                         f"Frame {frame_count}: Class {class_id}, Conf {best_confidence:.3f}, "
@@ -124,13 +154,13 @@ class GaugeReading(State):
                 time.sleep(0.1)
                 
         finally:
-            handler.cleanup()
+            image_handler.cleanup()
         
         # Final analysis
         elapsed_time = time.time() - start_time
         
         if best_detection_overall is not None:
-            final_class_id = best_detection_overall.class_id if hasattr(best_detection_overall, 'class_id') else best_detection_overall['class_id']
+            final_class_id = best_detection_overall.class_id
             
             self.node.get_logger().info(
                 f"=== FINAL RESULT ===\n"
