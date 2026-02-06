@@ -16,7 +16,6 @@ class GaugeReading(State):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.node = YasminNode.get_instance()
         self.confidence_threshold = confidence_threshold
-        self.frame = None  # Unificado
         
         # Initialize YOLODetector from Mirela SDK
         try:
