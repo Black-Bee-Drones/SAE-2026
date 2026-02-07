@@ -45,7 +45,7 @@ class GaugeReading(State):
             fps=30,
             fourcc="MJPG",
             buffer_size=1,
-            threaded=False,
+            threaded=True,
         )
 
         self.camera = OpenCVCam(config)
@@ -70,7 +70,10 @@ class GaugeReading(State):
                 frame = self.camera.get_frame()
 
                 if frame is None:
-                    print("Frame is None")
+                    self.node.get_logger().warn(
+                        "No frame captured from camera, retrying...",
+                        throttle_duration_sec=2.5
+                    )
                     continue
                 frame_count += 1
 
