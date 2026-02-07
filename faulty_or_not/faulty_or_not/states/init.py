@@ -16,7 +16,7 @@ class Init(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT, "GROUND_MONITOR"])
 
-        self.config = MavrosConfig(connection_string="serial:///dev/AMA0:921600")
+        self.config = MavrosConfig(connection_string="serial:///dev/ttyTHS1:921600")
 
         self.drone : MavrosDrone = None
         self.coords_file = os.path.expanduser("~/.faulty_or_not_mission_coords.json")
