@@ -31,7 +31,7 @@ class AudioFeedback(State):
             msg.data = packed_data
             publisher.publish(msg)
 
-        if "inference_image_cv" in blackboard:
+        if "inference_image_cv" in blackboard and blackboard["inference_image_cv"] is not None:
             cv2.imwrite(f"/tmp/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
             
 

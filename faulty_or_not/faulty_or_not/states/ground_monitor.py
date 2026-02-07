@@ -110,10 +110,6 @@ class GroundMonitor(State):
 
         self.pending_gauge = None  # consume
 
-        # Save image with meaningful filename
-        path = f"/tmp/gauge_wp{control_index}_class{gauge_reading}.png"
-        cv2.imwrite(path, image)
-
         self.node.get_logger().info(f"Saved image: waypoint {control_index}, gauge class {gauge_reading}")
 
     def save_waypoints(self, waypoints):
