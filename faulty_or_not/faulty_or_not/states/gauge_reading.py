@@ -154,10 +154,6 @@ class GaugeReading(State):
                     # Reset counter if nothing detected
                     consecutive_count = 0
                     last_class_id = None
-                
-                # Small delay
-                time.sleep(0.1)
-                
         finally:
             self.camera.close()
     
