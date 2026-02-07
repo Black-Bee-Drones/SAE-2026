@@ -52,7 +52,7 @@ class GaugeReading(State):
         self.camera.start()
             
         # Configuration
-        max_duration = 30.0  
+        max_duration = 60.0  
         consecutive_limit = 3 
         
         # System state
