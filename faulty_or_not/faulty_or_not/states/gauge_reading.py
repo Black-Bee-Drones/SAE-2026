@@ -7,8 +7,10 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from mirela_sdk.ai.detection.models.ultralytics import UltralyticsModel
 
-from mirela_sdk.vision.camera.config import OpenCVConfig
-from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
+# from mirela_sdk.vision.camera.config import OpenCVConfig
+# from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
+from mirela_sdk.vision.camera.drivers.imx219_cam import IMX219Cam
+from mirela_sdk.vision.camera.config import IMX219Config
 
 from sensor_msgs.msg import CompressedImage
 
@@ -37,18 +39,21 @@ class GaugeReading(State):
         if "inference_image_publisher" not in blackboard:
             blackboard["inference_image_publisher"] = self.node.create_publisher(CompressedImage, "/gauge/compressed", 10)
 
-        config = OpenCVConfig(
-            name="webcam",
-            device_index=0,
-            width=640,
-            height=640,
-            fps=30,
-            fourcc="MJPG",
-            buffer_size=1,
-            threaded=True,
-        )
+        config = IMX219Config()
 
-        self.camera = OpenCVCam(config)
+        # config = OpenCVConfig(
+        #     name="webcam",
+        #     device_index=0,
+        #     width=640,
+        #     height=640,
+        #     fps=30,
+        #     fourcc="MJPG",
+        #     buffer_size=1,
+        #     threaded=True,
+        # )
+
+        self.camera = IMX219Cam(config)
+        # self.camera = OpenCVCam(config)
         self.camera.start()
             
         # Configuration
