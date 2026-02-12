@@ -17,7 +17,6 @@ class GroundMonitor(State):
         self.node = YasminNode.get_instance()
         self.waypoints_file = os.path.expanduser("~/.faulty_or_not_waypoints.json")
 
-        self.pending_gauge = None
         self.waypoints = []  # Will be set after user selects waypoints
         
         # Map gauge class to actual pressure value
@@ -34,11 +33,6 @@ class GroundMonitor(State):
         self.node.get_logger().info("GroundMonitor initialized")
 
     def gauge_callback(self, msg: UInt8):
-        if self.pending_gauge is not None:
-            self.node.get_logger().warn(
-                "Gauge overwritten before image was received"
-            )
-        
         # Extract packed data: (gauge_reading << 5) | (control_index & 0x1F)
         packed_data = msg.data
         
@@ -53,13 +47,11 @@ class GroundMonitor(State):
         # Check if we have waypoints set
         if not self.waypoints or len(self.waypoints) == 0:
             self.node.get_logger().warn("Waypoints not set yet!")
-            self.pending_gauge = packed_data
             return
         
         # Check if control_index is valid
         if control_index >= len(self.waypoints):
             self.node.get_logger().error(f"Control index {control_index} out of bounds! Only {len(self.waypoints)} waypoints set.")
-            self.pending_gauge = packed_data
             return
         
         # Get expected pressure from waypoints
@@ -83,8 +75,6 @@ class GroundMonitor(State):
             path = os.path.join(package_share_directory, 'assets', 'not_faulty.mp3')
 
         playsound(path)
-
-        self.pending_gauge = packed_data
 
     def save_waypoints(self, waypoints):
         """Save waypoints to a file for persistence"""
