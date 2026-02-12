@@ -1,10 +1,7 @@
 from std_msgs.msg import UInt8
-from sensor_msgs.msg import CompressedImage
-import cv2
 from yasmin import Blackboard, State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED
-import numpy as np
 import sys
 import tty
 import termios
@@ -88,29 +85,6 @@ class GroundMonitor(State):
         playsound(path)
 
         self.pending_gauge = packed_data
-
-
-
-    def image_callback(self, msg: CompressedImage):
-        if self.pending_gauge is None:
-            self.node.get_logger().warn(
-                "Image received but no gauge available"
-            )
-            return
-
-        # Decode image
-        np_arr = np.frombuffer(msg.data, np.uint8)
-        image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-
-        packed_data = self.pending_gauge
-        
-        # Extract control_index and gauge_reading from packed data
-        control_index = packed_data & 0x1F
-        gauge_reading = (packed_data >> 5) & 0x07
-
-        self.pending_gauge = None  # consume
-
-        self.node.get_logger().info(f"Saved image: waypoint {control_index}, gauge class {gauge_reading}")
 
     def save_waypoints(self, waypoints):
         """Save waypoints to a file for persistence"""
@@ -326,13 +300,6 @@ class GroundMonitor(State):
             UInt8,
             "/gauge/reading",
             self.gauge_callback,
-            10
-        )
-
-        self.node.create_subscription(
-            CompressedImage,
-            "/gauge/inference_image/compressed",
-            self.image_callback,
             10
         )
 
