@@ -25,6 +25,7 @@ setup(
         'console_scripts': [
             'faulty_or_not = faulty_or_not.sm:main',
             'test_gauge_publisher = faulty_or_not.test_gauge_publisher:main',
+            'test_cam = faulty_or_not.test_cam:main',
         ],
     },
 )

@@ -32,7 +32,7 @@ class AudioFeedback(State):
             publisher.publish(msg)
 
         if "inference_image_cv" in blackboard and blackboard["inference_image_cv"] is not None:
-            cv2.imwrite(f"/tmp/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
+            cv2.imwrite(f"/home/jetson/Pictures/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
             
 
         # Wait end of communication
