@@ -18,6 +18,8 @@ class GroundMonitor(State):
         self.waypoints_file = os.path.expanduser("~/.faulty_or_not_waypoints.json")
 
         self.waypoints = []  # Will be set after user selects waypoints
+        self.processed_indices = set()  # Track already-processed control_index values
+        self.ack_publisher = None  # Publisher for ACK messages
         
         # Map gauge class to actual pressure value
         self.class_to_pressure = {
@@ -41,6 +43,14 @@ class GroundMonitor(State):
         
         # Extract gauge_reading (upper 3 bits)
         gauge_reading = (packed_data >> 5) & 0x07
+
+        # Ignore already-processed control indices (idempotent)
+        if control_index in self.processed_indices:
+            # Still send ACK so the sender stops retransmitting
+            ack_msg = UInt8()
+            ack_msg.data = control_index
+            self.ack_publisher.publish(ack_msg)
+            return
         
         self.node.get_logger().info(f"Received - Control Index: {control_index}, Gauge Class: {gauge_reading}")
         
@@ -75,6 +85,13 @@ class GroundMonitor(State):
             path = os.path.join(package_share_directory, 'assets', 'not_faulty.mp3')
 
         playsound(path)
+
+        # Mark as processed and send ACK
+        self.processed_indices.add(control_index)
+        ack_msg = UInt8()
+        ack_msg.data = control_index
+        self.ack_publisher.publish(ack_msg)
+        self.node.get_logger().info(f"ACK sent for control_index {control_index}")
 
     def save_waypoints(self, waypoints):
         """Save waypoints to a file for persistence"""
@@ -285,6 +302,9 @@ class GroundMonitor(State):
         self.node.get_logger().info(f"All waypoints saved: {waypoints}")
         self.node.get_logger().info(f"Monitoring {len(waypoints)} waypoints for faulty gauges...")
         self.node.get_logger().info("Press Ctrl+C to stop monitoring and exit")
+
+        # Create ACK publisher (GroundMonitor -> AudioFeedback)
+        self.ack_publisher = self.node.create_publisher(UInt8, "/gauge/ack", 10)
 
         self.node.create_subscription(
             UInt8,
