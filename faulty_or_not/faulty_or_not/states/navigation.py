@@ -4,9 +4,9 @@ from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.control.mavros.drone import MavrosDrone
+from nectar.control.mavros.drone import MavrosDrone
 
-from mirela_sdk.control.types import MoveReference
+from nectar.control.types import MoveReference
 
 
 class Navigation(State):

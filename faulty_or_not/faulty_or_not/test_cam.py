@@ -4,8 +4,8 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
-from mirela_sdk.vision.camera.drivers.imx219_cam import IMX219Cam
-from mirela_sdk.vision.camera.config import IMX219Config
+from nectar.vision.camera.drivers.imx219_cam import IMX219Cam
+from nectar.vision.camera.config import IMX219Config
 
 class TestCam(Node):
     def __init__(self):

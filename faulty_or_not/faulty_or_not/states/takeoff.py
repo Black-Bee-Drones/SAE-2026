@@ -6,7 +6,7 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 import time
 
-from mirela_sdk.control.mavros.drone import MavrosDrone
+from nectar.control.mavros.drone import MavrosDrone
 
 from faulty_or_not.parameters import TAKEOFF_ALTITUDE
 

@@ -5,12 +5,12 @@ from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.ai.detection.models.ultralytics import UltralyticsModel
+from nectar.ai.detection.models.ultralytics import UltralyticsModel
 
-# from mirela_sdk.vision.camera.config import OpenCVConfig
-# from mirela_sdk.vision.camera.drivers.opencv_cam import OpenCVCam
-from mirela_sdk.vision.camera.drivers.imx219_cam import IMX219Cam
-from mirela_sdk.vision.camera.config import IMX219Config
+# from nectar.vision.camera.config import OpenCVConfig
+# from nectar.vision.camera.drivers.opencv_cam import OpenCVCam
+from nectar.vision.camera.drivers.imx219_cam import IMX219Cam
+from nectar.vision.camera.config import IMX219Config
 
 from sensor_msgs.msg import CompressedImage
 

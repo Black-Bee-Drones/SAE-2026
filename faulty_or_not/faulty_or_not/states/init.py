@@ -9,7 +9,7 @@ from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.control.mavros.drone import MavrosDrone, MavrosConfig
+from nectar.control.mavros.drone import MavrosDrone, MavrosConfig
 from ..parameters import LOCATIONS
 
 class Init(State):

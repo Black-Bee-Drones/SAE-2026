@@ -1,5 +1,5 @@
 from yasmin import State
-from mirela_sdk.control.mavros.drone import MavrosDrone
+from nectar.control.mavros.drone import MavrosDrone
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 from yasmin import Blackboard
 import yasmin
