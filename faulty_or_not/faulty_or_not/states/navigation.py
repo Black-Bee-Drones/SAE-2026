@@ -38,6 +38,12 @@ class Navigation(State):
         # Navigate to the location center
         self.drone.move_to(x=cx, y=cy, z=cz, reference=MoveReference.TAKEOFF)
 
+        # Move to the starting point on the circumference so the circle
+        # is actually centered at (cx, cy, cz).
+        start_x = cx + CIRCLE_RADIUS
+        start_y = cy
+        self.drone.move_to(x=start_x, y=start_y, z=cz, reference=MoveReference.TAKEOFF)
+
         # Start non-blocking circle flight in a separate thread
         self._start_circle()
 
