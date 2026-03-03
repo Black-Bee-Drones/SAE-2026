@@ -39,7 +39,7 @@ class GaugeReading(State):
         if "inference_image_publisher" not in blackboard:
             blackboard["inference_image_publisher"] = self.node.create_publisher(CompressedImage, "/gauge/compressed", 10)
 
-        config = IMX219Config(brightness=-0.6)
+        config = IMX219Config()
 
         # config = OpenCVConfig(
         #     name="webcam",
@@ -162,7 +162,7 @@ class GaugeReading(State):
         finally:
             self.camera.close()
             # Stop the circle flight immediately
-            nav = blackboard.get("navigation_state")
+            nav = blackboard["navigation_state"]
             if nav is not None:
                 nav.stop_circle()
     

@@ -12,8 +12,8 @@ from nectar.control.mavros.drone import MavrosDrone
 from nectar.control.types import MoveReference
 
 # Circle parameters
-CIRCLE_RADIUS = 1.5   # radius in meters
-CIRCLE_SPEED = 0.5    # tangential speed in m/s
+CIRCLE_RADIUS = 0.3   # radius in meters
+CIRCLE_SPEED = 0.3    # tangential speed in m/s
 
 
 class Navigation(State):
@@ -45,6 +45,7 @@ class Navigation(State):
         self.drone.move_to(x=start_x, y=start_y, z=cz, reference=MoveReference.TAKEOFF)
 
         # Start non-blocking circle flight in a separate thread
+        print("STARTING THE CIRCLE MOVEMENT")
         self._start_circle()
 
         # Save reference so GaugeReading can stop the circle
@@ -66,7 +67,10 @@ class Navigation(State):
         if self._circle_thread is not None and self._circle_thread.is_alive():
             self._circle_stop_event.set()
             self._circle_thread.join(timeout=3.0)
-            self.drone.move_velocity(vx=0.0, vy=0.0, vz=0.0, duration=0.5)
+            try:
+                self.drone.move_velocity(vx=0.0, vy=0.0, vz=0.0, duration=0.5)
+            except Exception as e:
+                self.node.get_logger().warn(f"Could not send stop velocity: {e}")
             self.node.get_logger().info("Circle thread stopped.")
 
     def _fly_circle(self) -> None:
@@ -80,22 +84,26 @@ class Navigation(State):
             f"omega={math.degrees(omega):.1f}°/s, T={total_time:.1f}s"
         )
 
-        while elapsed < total_time and not self._circle_stop_event.is_set():
-            theta = omega * elapsed
+        try:
+            while elapsed < total_time and not self._circle_stop_event.is_set():
+                theta = omega * elapsed
 
-            vx = -CIRCLE_SPEED * math.sin(theta)
-            vy = CIRCLE_SPEED * math.cos(theta)
+                vx = -CIRCLE_SPEED * math.sin(theta)
+                vy = CIRCLE_SPEED * math.cos(theta)
 
-            self.drone.move_velocity(
-                vx=vx,
-                vy=vy,
-                vz=0.0,
-                reference=MoveReference.TAKEOFF,
-            )
+                self.drone.move_velocity(
+                    vx=vx,
+                    vy=vy,
+                    vz=0.0,
+                    reference=MoveReference.TAKEOFF,
+                )
 
-            self.drone.delay(dt)
-            elapsed += dt
+                self.drone.delay(dt)
+                elapsed += dt
 
-        # Stop the drone after completing (or being interrupted)
-        self.drone.move_velocity(vx=0.0, vy=0.0, vz=0.0, duration=0.5)
-        self.node.get_logger().info("Circle trajectory completed (360°)")
+            # Stop the drone after completing (or being interrupted)
+            if not self._circle_stop_event.is_set():
+                self.drone.move_velocity(vx=0.0, vy=0.0, vz=0.0, duration=0.5)
+            self.node.get_logger().info("Circle trajectory completed (360°)")
+        except Exception as e:
+            self.node.get_logger().warn(f"Circle thread interrupted: {e}")

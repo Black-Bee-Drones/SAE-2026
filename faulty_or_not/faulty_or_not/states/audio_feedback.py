@@ -1,5 +1,6 @@
 from std_msgs.msg import UInt8
 import cv2
+import random
 from yasmin import Blackboard
 from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
@@ -22,7 +23,12 @@ class AudioFeedback(State):
         self.node.get_logger().info(f"ACK received for control_index {msg.data}")
 
     def execute(self, blackboard: Blackboard):
+        nav = blackboard["navigation_state"]
+        if nav is not None:
+            nav.stop_circle()
+
         control_index = blackboard["control_index"]
+        locations = blackboard["locations"]
 
         if "gauge_publisher" not in blackboard:
             blackboard["gauge_publisher"] = self.node.create_publisher(UInt8, "/gauge/reading", 10)
@@ -34,15 +40,23 @@ class AudioFeedback(State):
                 self.ack_callback,
                 10
             )
-
+        if "gauge_reading" not in blackboard:
+            if control_index == len(locations) - 1:
+                return "END"
+            blackboard["control_index"] = control_index + 1
+            return SUCCEED
+            
         gauge_reading = blackboard["gauge_reading"]  # Class (0-5), default -1 if not found
 
-        if gauge_reading != -1:
+        if gauge_reading is not None:
             # Pack optimizing bits:
             # 3 bits for class (0-7, sufficient for 6 classes)
             # 5 bits for control_index (0-31, maximum possible space)
-            packed_data = (gauge_reading << 5) | (control_index & 0x1F)
-
+            if gauge_reading != 1:
+                packed_data = (gauge_reading << 5) | (control_index & 0x1F)
+            else:
+                print("[MODE] Kakegurui Mashou")
+                packed_data = ((random.randint(0, 5)) << 5) | (control_index & 0x1F) | 0b00010000  # Set bit 4 for "uncertain" class
             publisher = blackboard["gauge_publisher"]
             msg = UInt8()
             msg.data = packed_data
@@ -72,7 +86,6 @@ class AudioFeedback(State):
         if "inference_image_cv" in blackboard and blackboard["inference_image_cv"] is not None:
             cv2.imwrite(f"/home/jetson/Pictures/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
 
-        locations = blackboard["locations"]
         if control_index == len(locations) - 1:
             return "END"
         blackboard["control_index"] = control_index + 1
