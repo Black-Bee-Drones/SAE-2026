@@ -5,15 +5,12 @@ import yasmin
 from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, ABORT
 
-from mirela_sdk.control.mavros import MavDrone
-from mirela_sdk.control.pid import PIDController
-from mirela_sdk.image_processing.camera import ImageHandler
-from mirela_sdk.ai.detection import Detector
-
+from nectar.control import MavrosDrone, MoveReference, PIDController
+from nectar.vision import ImageHandler
+from nectar.ai import Detector
 
 from bouncing.constants import (
     PRECISE_LANDING_ALTITUDE,
-    PRECISE_LANDING_GO_TO_POINT_TIMEOUT,
     PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE,
     PRECISE_LANDING_TIMEOUT,
     PRECISE_LANDING_VERTICAL_SPEED,
@@ -46,69 +43,77 @@ class PreciseLanding(State):
         )
 
 
+    def log(self, msg, style='info'):
+        class_name = f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+
+        if style == 'info':
+            yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
+        elif style == 'error':
+            yasmin.YASMIN_LOG_ERROR(f'{class_name}: {msg}')
+
+
     def execute(self, blackboard: Blackboard):
-        if ('mavdrone' not in blackboard) or not blackboard['mavdrone']:
-            yasmin.YASMIN_LOG_ERROR('PreciseLanding(State): MavDrone not available.')
+        if ('drone' not in blackboard) or not blackboard['drone']:
+            self.log(
+                'MavrosDrone not available.',
+                style='error'
+            )
             return ABORT
-        mavdrone: MavDrone = blackboard['mavdrone']
+        drone: MavrosDrone = blackboard['drone']
 
         if ('image_handler' not in blackboard) or not blackboard['image_handler']:
-            yasmin.YASMIN_LOG_ERROR('PreciseLanding(State): ImageHandler not available.')
+            self.log(
+                'ImageHandler not available.',
+                style='error'
+            )
             return ABORT
         image_handler: ImageHandler = blackboard['image_handler']
 
         if ('detector' not in blackboard) or not blackboard['detector']:
-            yasmin.YASMIN_LOG_ERROR('PreciseLanding(State): Detector not available.')
+            self.log(
+                'Detector not available.',
+                style='error'
+            )
             return ABORT
         detector: Detector = blackboard['detector']
 
         if ('target_base' not in blackboard) or not blackboard['target_base']:
-            yasmin.YASMIN_LOG_ERROR('PreciseLanding(State): \"target_base\" not available.')
+            self.log(
+                '\"target_base\" not available.',
+                style='error'
+            )
             return ABORT
         target_base: dict = blackboard['target_base']
 
+        self.log('Start.')
 
-        yasmin.YASMIN_LOG_INFO('PreciseLanding(State): Start.')
-
-
-        yasmin.YASMIN_LOG_INFO(f'PreciseLanding(State): Go to target base: {target_base}')
-        mavdrone.offboard_position(
+        self.log(f'Go to target base: {target_base}')
+        drone.offboard_position(
             x=target_base['x'],
             y=target_base['y'],
             z=PRECISE_LANDING_ALTITUDE,
             yaw=0.0,
-            ground_reference=True,
-            timeout_sec=PRECISE_LANDING_GO_TO_POINT_TIMEOUT,
-            precision_radius=0.1,
-            strategy='PID',
+            reference = MoveReference.TAKEOFF,
         )
 
-
-        yasmin.YASMIN_LOG_INFO(f'PreciseLanding(State): Start PID in target base: {target_base}.')
+        self.log(f'Start PID in target base: {target_base}.')
         lost_detection_count = 0
         start = self.node.get_clock().now()
         while (self.node.get_clock().now() - start).nanoseconds / 1e9 < PRECISE_LANDING_TIMEOUT:
 
-            if mavdrone.rel_alt <= PRECISE_LANDING_LAND_ALTITUDE:
-                yasmin.YASMIN_LOG_INFO(f'PreciseLanding(State): Completed successfully.')
-                mavdrone.offboard_velocity(
-                    self,
-                    linear_x = 0.0,
-                    linear_y = 0.0,
-                    linear_z = 0.0,
-                    angular_z = 0.0,
-                    ground_reference = False,
-                )
-                mavdrone.delay(1.0)
+            if drone.rel_alt <= PRECISE_LANDING_LAND_ALTITUDE:
+                self.log(f'Completed successfully.')
+                drone.move_velocity()
+                drone.delay(1.0)
                 return SUCCEED
 
-            yasmin.YASMIN_LOG_INFO('PreciseLanding(State): Take photo.')
+            self.log('Take photo.')
             result = image_handler.take_photo()
 
             annotated = detector.draw_detections(result.image, result)
             name = f'photo-{time.time_ns()}.png'
             cv2.imwrite(name, annotated)
-            yasmin.YASMIN_LOG_INFO(f'PreciseLanding(State): Save annotated photo: {name}.')
+            self.log(f'Save annotated photo: {name}.')
 
             error_x, error_y = None, None
 
@@ -140,23 +145,21 @@ class PreciseLanding(State):
                 output_x = self.pid_x.update(error_x)
                 output_y = self.pid_y.update(error_y)
 
-                yasmin.YASMIN_LOG_INFO(f'Descend(State): Detection: error_x={error_x}, error_y={error_y}, output_x={output_x}, output_y={output_y}')
-                mavdrone.offboard_velocity(
-                    self,
-                    linear_x = output_x,
-                    linear_y = output_y,
-                    linear_z = -PRECISE_LANDING_VERTICAL_SPEED if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2) else 0.0,
-                    angular_z = 0.0,
-                    ground_reference = False,
+                self.log(f'Detection: error_x={error_x}, error_y={error_y}, output_x={output_x}, output_y={output_y}')
+                drone.move_velocity(
+                    vx = output_x,
+                    vy = output_y,
+                    vz = -PRECISE_LANDING_VERTICAL_SPEED if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2) else 0.0,
+                    vyaw = 0.0,
                 )
 
             else:
                 lost_detection_count += 1
-                yasmin.YASMIN_LOG_INFO(f'PreciseLanding(State): Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
+                self.log(f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
 
                 if lost_detection_count >= PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE:
-                    yasmin.YASMIN_LOG_INFO(f'PreciseLanding(State): FAIL, lost detection.')
+                    self.log(f'FAIL, lost detection.')
                     return FAIL
 
-        yasmin.YASMIN_LOG_INFO(f'PreciseLanding(State): FAIL, timeout.')
+        self.log(f'FAIL, timeout.')
         return FAIL

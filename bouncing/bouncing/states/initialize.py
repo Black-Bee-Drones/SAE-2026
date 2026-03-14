@@ -3,9 +3,9 @@ from yasmin import State, Blackboard
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.control.mavros import MavDrone
-from mirela_sdk.image_processing.camera import ImageHandler
-from mirela_sdk.ai.detection import Detector
+from nectar.control import MavrosDrone, MavrosConfigpython
+from nectar.vision import ImageHandler
+from nectar.ai import Detector
 
 from bouncing.constants import (
     IS_INDOOR,
@@ -23,48 +23,61 @@ class Initialize(State):
         self.node = YasminNode.get_instance()
 
 
+    def log(self, msg, style='info'):
+        class_name = f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+
+        if style == 'info':
+            yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
+        elif style == 'error':
+            yasmin.YASMIN_LOG_ERROR(f'{class_name}: {msg}')
+
+
     def execute(self, blackboard: Blackboard):
-        yasmin.YASMIN_LOG_INFO('Initialize(State): Start.')
+        self.log('Start.')
 
 
-        yasmin.YASMIN_LOG_INFO('Initialize(State): Initializing \"target_base\"...')
+        self.log('Initializing \"target_base\"...')
         blackboard['target_base'] = {} # {class, symbol}
 
 
-        yasmin.YASMIN_LOG_INFO('Initialize(State): Initializing MavDrone...')
+        self.log('Initializing MavrosDrone...')
         try:
-            blackboard['mavdrone'] = MavDrone(
+            config = MavrosConfigpython()
+            blackboard['drone'] = MavrosDrone(
+                config=config,
                 node=self.node,
-                mavros=False,
-                indoor=IS_INDOOR,
             )
-            yasmin.YASMIN_LOG_INFO('Initialize(State): Successfull start MavDrone...')
+            self.log('Successfull start MavrosDrone...')
         except Exception as e:
-            yasmin.YASMIN_LOG_ERROR(f'Initialize(State): Mavdrone failed: {e}.')
+            self.log(
+                f'Mavdrone failed: {e}.',
+                style='error',
+            )
             return ABORT
 
 
-        yasmin.YASMIN_LOG_INFO('Initialize(State): Initializing Detector...')
+        self.log('Initializing Detector...')
         try:
             detector = Detector(
                 model_source = MODEL_SOURCE,
-                framework = None,
-                device = 'auto',
                 confidence_threshold = MODEL_CONFIDENCE_THRESHOLD,
             )
 
-            yasmin.YASMIN_LOG_INFO('Initialize(State): Loading Detector...')
+            self.log('Loading Detector...')
             detector.load()
 
             blackboard['detector'] = detector
-            yasmin.YASMIN_LOG_INFO('Initialize(State): Successfull start Detector...')
+            self.log('Successfull start Detector...')
 
         except Exception as e:
-            yasmin.YASMIN_LOG_ERROR(f'Initialize(State): Detector failed: {e}.')
+            self.log(
+                f'Detector failed: {e}.',
+                style='error',
+            )
             return ABORT
 
 
-        yasmin.YASMIN_LOG_INFO('Initialize(State): Initializing ImageHandler...')
+        self.log('Initializing ImageHandler...')
         try:
             image_handler = ImageHandler(
                 node=self.node,
@@ -73,16 +86,19 @@ class Initialize(State):
                 image_processing_callback=detector.detect,
             )
 
-            yasmin.YASMIN_LOG_INFO('Initialize(State): Take testing photo...')
+            self.log('Take testing photo...')
             image_handler.take_photo()
 
             blackboard['image_handler'] = image_handler
-            yasmin.YASMIN_LOG_INFO('Initialize(State): Successfull start ImageHandler...')
+            self.log('Successfull start ImageHandler...')
 
         except Exception as e:
-            yasmin.YASMIN_LOG_ERROR(f'Initialize(State): ImageHandler failed: {e}.')
+            self.log(
+                f'ImageHandler failed: {e}.',
+                style='error',
+            )
             return ABORT
 
 
-        yasmin.YASMIN_LOG_INFO('Initialize(State): Completed successfully.')
+        self.log('Completed successfully.')
         return SUCCEED

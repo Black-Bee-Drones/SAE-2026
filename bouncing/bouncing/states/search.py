@@ -5,38 +5,56 @@ import yasmin
 from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, ABORT
 
-from mirela_sdk.control.mavros import MavDrone
-from mirela_sdk.image_processing.camera import ImageHandler
-from mirela_sdk.ai.detection import Detector
+from nectar.control import MavrosDrone, MoveReference
+from nectar.vision import ImageHandler
+from nectar.ai import Detector
 
 from bouncing.constants import (
     SEARCH_ALTITUDE,
-    SEARCH_POINTS_TIMEOUT,
     SEARCH_POINTS,
 )
+
 
 class Search(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, FAIL, ABORT])
 
 
+    def log(self, msg, style='info'):
+        class_name = f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+
+        if style == 'info':
+            yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
+        elif style == 'error':
+            yasmin.YASMIN_LOG_ERROR(f'{class_name}: {msg}')
+
+
     def execute(self, blackboard: Blackboard):
-        if ('mavdrone' not in blackboard) or not blackboard['mavdrone']:
-            yasmin.YASMIN_LOG_ERROR(f'Search(State): MavDrone not available.')
+        if ('drone' not in blackboard) or not blackboard['drone']:
+            self.log(
+                f'MavrosDrone not available.',
+                style='error'
+            )
             return ABORT
-        mavdrone: MavDrone = blackboard['mavdrone']
+        drone: MavrosDrone = blackboard['drone']
 
         if ('image_handler' not in blackboard) or not blackboard['image_handler']:
-            yasmin.YASMIN_LOG_ERROR(f'Search(State): ImageHandler not available.')
+            self.log(
+                f'ImageHandler not available.',
+                style='error'
+            )
             return ABORT
         image_handler: ImageHandler = blackboard['image_handler']
 
         if ('detector' not in blackboard) or not blackboard['detector']:
-            yasmin.YASMIN_LOG_ERROR(f'Search(State): Detector not available.')
+            self.log(
+                f'Detector not available.',
+                style='error'
+            )
             return ABORT
         detector: Detector = blackboard['detector']
 
-        yasmin.YASMIN_LOG_INFO('Search(State): Start.')
+        self.log('Start.')
 
         target_base = {
             'shape': None,
@@ -46,20 +64,17 @@ class Search(State):
         }
         results = []
         for i, point in enumerate(SEARCH_POINTS):
-            yasmin.YASMIN_LOG_INFO(f'Search(State): Coordinate {i + 1}/{len(SEARCH_POINTS)}: {point}.')
+            self.log(f'Coordinate {i + 1}/{len(SEARCH_POINTS)}: {point}.')
 
-            mavdrone.offboard_position(
+            drone.move_to(
                 x=point['x'],
                 y=point['y'],
                 z=SEARCH_ALTITUDE,
                 yaw=0.0,
-                ground_reference=True,
-                timeout_sec=SEARCH_POINTS_TIMEOUT,
-                precision_radius=0.1,
-                strategy="PID",
+                reference = MoveReference.TAKEOFF,
             )
 
-            yasmin.YASMIN_LOG_INFO(f'Search(State): Photo {i + 1}/{len(SEARCH_POINTS)}.')
+            self.log(f'Photo {i + 1}/{len(SEARCH_POINTS)}.')
             result = image_handler.take_photo()
             results.append(result)
 
@@ -75,10 +90,10 @@ class Search(State):
                 )
 
                 if aruco_detection:
-                    yasmin.YASMIN_LOG_INFO(f'Search(State): Aruco detected.')
+                    self.log(f'Aruco detected.')
 
                     # number = get number of aruco
-                    yasmin.YASMIN_LOG_INFO(f'Search(State): Aruco number: {number}.')
+                    self.log(f'Aruco number: {number}.')
 
                     if number % 3 == 0:
                         multiple = 3
@@ -87,7 +102,7 @@ class Search(State):
                     else:
                         multiple = 5
 
-                    yasmin.YASMIN_LOG_INFO(f'Search(State): Aruco multiplo: {multiple}.')
+                    self.log(f'Aruco multiplo: {multiple}.')
                     target_base['number'] = multiple
 
                     # Search aruco shape
@@ -96,7 +111,7 @@ class Search(State):
                             (det.bbox[0] <= aruco_detection.center[0] <= det.bbox[2]) and \
                             (det.bbox[1] <= aruco_detection.center[1] <= det.bbox[3]):
 
-                            yasmin.YASMIN_LOG_INFO(f'Search(State): Aruco shape: {det.class_name}.')
+                            self.log(f'Aruco shape: {det.class_name}.')
                             target_base['shape'] = det.class_name
                             break
 
@@ -111,14 +126,17 @@ class Search(State):
                             if (shape.bbox[0] <= number.center[0] <= shape.bbox[2]) and \
                                 (shape.bbox[1] <= number.center[1] <= shape.bbox[3]):
 
-                                yasmin.YASMIN_LOG_INFO(f'Search(State): Find target base.')
+                                self.log('Find target base.')
 
                                 target_base['x'] = SEARCH_POINTS[j]['x']
                                 target_base['y'] = SEARCH_POINTS[j]['y']
                                 blackboard['target_base'] = target_base
 
-                                yasmin.YASMIN_LOG_INFO(f'Search(State): Completed successfully.')
+                                self.log('Completed successfully.')
                                 return SUCCEED
 
-        yasmin.YASMIN_LOG_ERROR(f'Search(State): Aruco/base not found.')
+        self.log(
+            'Aruco/base not found.',
+            style='error'
+        )
         return FAIL

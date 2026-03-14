@@ -2,7 +2,7 @@ import yasmin
 from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.control.mavros import MavDrone
+from nectar.control import MavrosDrone
 
 
 class Land(State):
@@ -10,20 +10,35 @@ class Land(State):
         super().__init__(outcomes=[SUCCEED, ABORT])
 
 
-    def execute(self, blackboard: Blackboard):
-        if ('mavdrone' not in blackboard) or not blackboard['mavdrone']:
-            yasmin.YASMIN_LOG_ERROR('Land(State): MavDrone not available.')
-            return ABORT
-        mavdrone: MavDrone = blackboard['mavdrone']
+    def log(self, msg, style='info'):
+        class_name = f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
 
-        yasmin.YASMIN_LOG_ERROR('Land(State): Start.')
+        if style == 'info':
+            yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
+        elif style == 'error':
+            yasmin.YASMIN_LOG_ERROR(f'{class_name}: {msg}')
+
+
+    def execute(self, blackboard: Blackboard):
+        if ('drone' not in blackboard) or not blackboard['drone']:
+            self.log(
+                'drone not available.',
+                style='error',
+            )
+            return ABORT
+        drone: MavrosDrone = blackboard['drone']
+
+        self.log('Start.')
 
         try:
-            mavdrone.land()
+            drone.land()
 
         except Exception as e:
-            yasmin.YASMIN_LOG_INFO(f'Land(State): Landing failed: {e}.')
+            self.log(
+                f'Landing failed: {e}.',
+                style='error'
+            )
             return ABORT
 
-        yasmin.YASMIN_LOG_INFO('Land(State): Completed successfully.')
+        self.log('Completed successfully.',)
         return SUCCEED

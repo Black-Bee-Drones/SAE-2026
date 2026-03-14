@@ -3,7 +3,7 @@ from yasmin import State, Blackboard
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from mirela_sdk.control.mavros import MavDrone
+from nectar.control import MavrosDrone
 
 from bouncing.constants import (
     TAKEOFF_ALTITUDE,
@@ -18,23 +18,36 @@ class Takeoff(State):
         self.node = YasminNode.get_instance()
 
 
+    def log(self, msg, style='info'):
+        class_name = f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+
+        if style == 'info':
+            yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
+        elif style == 'error':
+            yasmin.YASMIN_LOG_ERROR(f'{class_name}: {msg}')
+
+
     def execute(self, blackboard: Blackboard):
-        if 'mavdrone' not in blackboard:
-            yasmin.YASMIN_LOG_ERROR('Takeoff(State): MavDrone not available.')
+        if 'drone' not in blackboard:
+            self.log(
+                'drone not available.',
+                style='error'
+            )
             return ABORT
-        mavdrone: MavDrone = blackboard['mavdrone']
+        drone: MavrosDrone = blackboard['drone']
 
-        yasmin.YASMIN_LOG_INFO('Takeoff(State): Start.')
+        self.log('Start.')
 
-
-        yasmin.YASMIN_LOG_INFO(f'Taking off to altitude: {TAKEOFF_ALTITUDE}m...')
+        self.log(f'Taking off to altitude: {TAKEOFF_ALTITUDE}m...')
         try:
-            mavdrone.arm_takeoff(TAKEOFF_ALTITUDE)
-            mavdrone.delay(TAKEOFF_SLEEP)
+            drone.arm_takeoff(TAKEOFF_ALTITUDE)
+            drone.delay(TAKEOFF_SLEEP)
         except Exception as e:
-            yasmin.YASMIN_LOG_ERROR(f'Takeoff(State): Taking off failed: {e}.')
+            self.log(
+                f'Taking off failed: {e}.',
+                style='error'
+            )
             return ABORT
 
-
-        yasmin.YASMIN_LOG_INFO('Takeoff(State): Completed successfully.')
+        self.log('Completed successfully.')
         return SUCCEED
