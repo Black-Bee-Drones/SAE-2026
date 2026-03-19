@@ -20,7 +20,7 @@ class ReturnToLaunch(State):
 
         yasmin.YASMIN_LOG_INFO("Returning to launch...")
         try:
-            self.drone.rtl(rtl_alt=TAKEOFF_ALTITUDE, rtl_strategy="PID")
+            self.drone.rtl().wait(timeout=30)
             yasmin.YASMIN_LOG_INFO("Return to launch initiated.")
             return SUCCEED
         except Exception as e:
