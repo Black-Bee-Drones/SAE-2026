@@ -5,8 +5,6 @@ import yasmin
 
 from zaxis.drone import Drone
 
-from ..parameters import TAKEOFF_ALTITUDE
-
 class ReturnToLaunch(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
