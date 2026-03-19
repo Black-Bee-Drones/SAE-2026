@@ -1,22 +1,22 @@
 from yasmin import State
-from nectar.control.mavros.drone import MavrosDrone
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 from yasmin import Blackboard
 import yasmin
+
+from zaxis.drone import Drone
 
 from ..parameters import TAKEOFF_ALTITUDE
 
 class ReturnToLaunch(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
-        self.drone : MavrosDrone = None
 
     def execute(self, blackboard : Blackboard):
         if "drone" not in blackboard:
-            yasmin.YASMIN_LOG_ERROR("Could not retrieve MAVDRONE instance from blackboard.")
+            yasmin.YASMIN_LOG_ERROR("Could not retrieve Drone instance from blackboard.")
             return ABORT
         
-        self.drone: MavrosDrone = blackboard["drone"]
+        self.drone: Drone = blackboard["drone"]
 
         yasmin.YASMIN_LOG_INFO("Returning to launch...")
         try:

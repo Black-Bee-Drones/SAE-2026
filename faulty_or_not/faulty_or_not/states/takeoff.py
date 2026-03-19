@@ -4,9 +4,7 @@ from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-import time
-
-from nectar.control.mavros.drone import MavrosDrone
+from zaxis.drone import Drone
 
 from faulty_or_not.parameters import TAKEOFF_ALTITUDE
 
@@ -14,20 +12,18 @@ from faulty_or_not.parameters import TAKEOFF_ALTITUDE
 class Takeoff(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
-        self.drone : MavrosDrone = None
         self.node = YasminNode.get_instance()
 
     def execute(self, blackboard : Blackboard):
         if "drone" not in blackboard:
-            yasmin.YASMIN_LOG_ERROR("Could not retrieve MAVDRONE instance from blackboard.")
+            yasmin.YASMIN_LOG_ERROR("Could not retrieve Drone instance from blackboard.")
             return ABORT
 
-        self.drone: MavrosDrone = blackboard["drone"]
+        self.drone : Drone = blackboard["drone"]
         yasmin.YASMIN_LOG_INFO("Taking off...")
 
         try:
-            self.drone.takeoff(TAKEOFF_ALTITUDE)
-            time.sleep(3)
+            self.drone.takeoff(TAKEOFF_ALTITUDE).wait(timeout=10)
             yasmin.YASMIN_LOG_INFO("Takeoff successful.")
             return SUCCEED
         except Exception as e:

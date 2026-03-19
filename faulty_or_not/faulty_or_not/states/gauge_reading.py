@@ -7,10 +7,12 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from nectar.ai.detection.models.ultralytics import UltralyticsModel
 
+from .navigation import Navigation
+
 # from nectar.vision.camera.config import OpenCVConfig
 # from nectar.vision.camera.drivers.opencv_cam import OpenCVCam
-from nectar.vision.camera.drivers.imx219_cam import IMX219Cam
-from nectar.vision.camera.config import IMX219Config
+from nectar.vision.camera.drivers.oakd_cam import OakdCam
+from nectar.vision.camera.config import OakDConfig
 
 from sensor_msgs.msg import CompressedImage
 
@@ -39,7 +41,7 @@ class GaugeReading(State):
         if "inference_image_publisher" not in blackboard:
             blackboard["inference_image_publisher"] = self.node.create_publisher(CompressedImage, "/gauge/compressed", 10)
 
-        config = IMX219Config()
+        config = OakDConfig()
 
         # config = OpenCVConfig(
         #     name="webcam",
@@ -52,7 +54,7 @@ class GaugeReading(State):
         #     threaded=True,
         # )
 
-        self.camera = IMX219Cam(config)
+        self.camera = OakdCam(config)
         # self.camera = OpenCVCam(config)
         self.camera.start()
             
@@ -161,10 +163,10 @@ class GaugeReading(State):
                     last_class_id = None
         finally:
             self.camera.close()
-            # Stop the circle flight immediately
-            nav = blackboard["navigation_state"]
+            # Stop the diamond flight immediately
+            nav : Navigation = blackboard["navigation_state"]
             if nav is not None:
-                nav.stop_circle()
+                nav.stop_diamond()
     
         
         if last_class_id is not None:            

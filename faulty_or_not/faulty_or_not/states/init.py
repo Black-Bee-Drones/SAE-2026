@@ -9,16 +9,18 @@ from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from nectar.control.mavros.drone import MavrosDrone, MavrosConfig
 from ..parameters import LOCATIONS
+
+from zaxis.telemetry import MavlinkConnection
+from zaxis.drone import Drone
 
 class Init(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT, "GROUND_MONITOR"])
 
-        self.config = MavrosConfig(connection_string="serial:///dev/ttyTHS1:921600")
-
-        self.drone : MavrosDrone = None
+        connection = MavlinkConnection("drone")
+        connection.connect("/dev/ttyTHS1",921600)
+        self.drone = Drone(connection)
         self.coords_file = os.path.expanduser("~/.faulty_or_not_mission_coords.json")
 
     def save_debug_coordinates(self, locations):
@@ -187,7 +189,6 @@ class Init(State):
             blackboard["control_index"] = 0
             blackboard["locations"] = locations
 
-            self.drone = MavrosDrone(config=self.config, node=YasminNode.get_instance())
             blackboard["drone"] = self.drone
 
             return SUCCEED

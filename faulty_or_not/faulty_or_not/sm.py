@@ -51,7 +51,7 @@ class FaultyOrNot(StateMachine):
         self.add_state(
             "RETURN_TO_LAUNCH",
             ReturnToLaunch(),
-            transitions={SUCCEED:"END", ABORT:"END"}
+            transitions={SUCCEED:"END", ABORT:ABORT}
         )
 
         self.set_start_state("INIT")
