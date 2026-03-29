@@ -1,3 +1,5 @@
+import cv2
+
 from rclpy.duration import Duration
 
 import yasmin
@@ -5,7 +7,7 @@ from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, TIMEOUT, ABORT
 
 from nectar.control import MavrosDrone, PIDController
-from nectar.vision import ImageHandler
+from nectar.vision import ImageHandler, Detector
 
 from bouncing.constants import (
     PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE,
@@ -86,6 +88,16 @@ class PreciseLanding(State):
 
             self.log(f'Take and process photo.')
             result = image_handler.take_photo()
+
+            now = self.node.get_clock().now().nanoseconds
+            name = f'photo-{now}.png'
+            cv2.imwrite(name, result.image)
+            self.log(f'Save raw photo: {name}.')
+
+            annotated = Detector.draw_detections(result.image, result)
+            annotated_name = f'photo-{now}-annotated.png'
+            cv2.imwrite(annotated_name, annotated)
+            self.log(f'Save annotated photo: {annotated_name}.')
 
             # Search number inside shape
             landing_bases = []

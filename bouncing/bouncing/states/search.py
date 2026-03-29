@@ -1,10 +1,11 @@
 import cv2
 
 import yasmin
+from yasmin_ros.yasmin_node import YasminNode
 from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, ABORT
 
-from nectar.vision import ImageHandler
+from nectar.vision import ImageHandler, Detector
 
 from bouncing.constants import (
     SEARCH_NUMBER_DETECTIONS,
@@ -15,6 +16,7 @@ from bouncing.constants import (
 class Search(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, FAIL, ABORT])
+        self.node = YasminNode.get_instance()
 
 
     def log(self, msg, style='info'):
@@ -43,6 +45,16 @@ class Search(State):
         for i in range(SEARCH_NUMBER_DETECTIONS):
             self.log(f'Take and process photo {i+1}/{SEARCH_NUMBER_DETECTIONS}.')
             result = image_handler.take_photo()
+
+            now = self.node.get_clock().now().nanoseconds
+            name = f'photo-{now}.png'
+            cv2.imwrite(name, result.image)
+            self.log(f'Save raw photo: {name}.')
+
+            annotated = Detector.draw_detections(result.image, result)
+            annotated_name = f'photo-{now}-annotated.png'
+            cv2.imwrite(annotated_name, annotated)
+            self.log(f'Save annotated photo: {annotated_name}.')
 
             # Search aruco number
             find_arucos = []

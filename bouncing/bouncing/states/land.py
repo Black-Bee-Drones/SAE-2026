@@ -40,5 +40,5 @@ class Land(State):
             )
             return ABORT
 
-        self.log('Completed successfully.',)
+        self.log('Completed successfully.')
         return SUCCEED
