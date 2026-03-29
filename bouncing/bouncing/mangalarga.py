@@ -34,7 +34,7 @@ class Bouncing(StateMachine):
         self.add_state(
             "SEARCH",
             Search(),
-            transitions={SUCCEED:"PRECISE_LANDING", FAIL: "SEARCH", ABORT:"LAND"},
+            transitions={SUCCEED:"PRECISE_LANDING", FAIL: "LAND", ABORT:"LAND"},
         )
         self.add_state(
             "PRECISE_LANDING",

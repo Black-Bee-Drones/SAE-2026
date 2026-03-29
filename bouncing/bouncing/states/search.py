@@ -1,17 +1,14 @@
 import cv2
-import time
 
 import yasmin
 from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, ABORT
 
-from nectar.control import MavrosDrone, MoveReference
 from nectar.vision import ImageHandler
-from nectar.ai import Detector
 
 from bouncing.constants import (
-    SEARCH_ALTITUDE,
-    SEARCH_POINTS,
+    SEARCH_NUMBER_DETECTIONS,
+    SEARCH_DETECTIONS_LOST_TOLERANCE,
 )
 
 
@@ -30,14 +27,6 @@ class Search(State):
 
 
     def execute(self, blackboard: Blackboard):
-        if ('drone' not in blackboard) or not blackboard['drone']:
-            self.log(
-                f'MavrosDrone not available.',
-                style='error'
-            )
-            return ABORT
-        drone: MavrosDrone = blackboard['drone']
-
         if ('image_handler' not in blackboard) or not blackboard['image_handler']:
             self.log(
                 f'ImageHandler not available.',
@@ -46,97 +35,135 @@ class Search(State):
             return ABORT
         image_handler: ImageHandler = blackboard['image_handler']
 
-        if ('detector' not in blackboard) or not blackboard['detector']:
-            self.log(
-                f'Detector not available.',
-                style='error'
-            )
-            return ABORT
-        detector: Detector = blackboard['detector']
-
         self.log('Start.')
 
-        target_base = {
-            'shape': None,
-            'number': None,
-            'x': None,
-            'y': None,
-        }
-        results = []
-        for i, point in enumerate(SEARCH_POINTS):
-            self.log(f'Coordinate {i + 1}/{len(SEARCH_POINTS)}: {point}.')
+        target_base = {} # {shape, number}
 
-            drone.move_to(
-                x=point['x'],
-                y=point['y'],
-                z=SEARCH_ALTITUDE,
-                yaw=0.0,
-                reference = MoveReference.TAKEOFF,
+        count = 0
+        for i in range(SEARCH_NUMBER_DETECTIONS):
+            self.log(f'Take and process photo {i+1}/{SEARCH_NUMBER_DETECTIONS}.')
+            result = image_handler.take_photo()
+
+            # Search aruco number
+            find_arucos = []
+            for a in list(d for d in result if d.class_name == '6'): # aruco detections
+                x1, y1, x2, y2 = a.bbox
+
+                h, w = result.image.shape[:2]
+
+                x1 = min(w, max(0, int(x1 - a.width / 2)))
+                y1 = min(h, max(0, int(y1 - a.height / 2)))
+                x2 = min(w, max(0, int(x2 + a.width / 2)))
+                y2 = min(h, max(0, int(y2 + a.height / 2)))
+
+                crop = a.image[y1:y2, x1:x2]
+
+                n = self.get_number_of_aruco(crop)
+
+                if not n:
+                    continue
+
+                if n % 3 == 0:
+                    find_arucos.append((a, 3))
+                elif n % 4 == 0:
+                    find_arucos.append((a, 4))
+                elif n % 5 == 0:
+                    find_arucos.append((a, 5))
+
+            if not find_arucos:
+                self.log(
+                    'Aruco not found.',
+                    style='error'
+                )
+                count = 0
+                continue
+
+            aruco, target_base['number'] = max(find_arucos, key=lambda a: a[0].confidence)
+            self.log(f'Aruco found. Target number: {target_base["number"]}.')
+
+            # Search aruco shape
+            aruco_shapes = []
+            for s in list(d for d in result if d.class_name == ('0', '1', '2')):  # all shapes
+                if (abs(aruco.center[0] - s.center[0]) <= s.width / 2) and (abs(aruco.center[1] - s.center[1]) <= s.height / 2):
+                    aruco_shapes.append((s, n))
+
+            if not aruco_shapes:
+                self.log(
+                    'Shape of aruco not found.',
+                    style='error'
+                )
+                count = 0
+                continue
+
+            aruco_shape = max(
+                aruco_shapes,
+                key=lambda shape: (shape.center[0] - aruco.center[0]) ** 2 + (shape.center[1] - aruco.center[1]) ** 2
             )
 
-            self.log(f'Photo {i + 1}/{len(SEARCH_POINTS)}.')
-            result = image_handler.take_photo()
-            results.append(result)
+            target_base['shape'] = aruco_shape.class_name
+            self.log(f'Shape of aruco found. Target shape: {target_base["shape"]}.')
 
-            annotated = detector.draw_detections(result.image, result)
-            cv2.imwrite(f'photo-{time.time_ns()}-{i}.png', annotated)
+            # Save target base on blackboard
+            blackboard['target_base'] = target_base
 
-            # Search aruco
-            if target_base['number'] is not None:
-                aruco_detection = max(
-                    result.filter_by_class(('aruco')),
-                    key=lambda d: d.confidence,
-                    default=None,
+            # Search Landing base
+            landing_bases = []
+            for s in list(d for d in result if d.class_name == target_base['shape']):  # all target shapes
+                for n in list(d for d in result if d.class_name == target_base['number']):  # all target numbers
+                    if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
+                        landing_bases.append((s, n))
+
+            if not landing_bases:
+                self.log(
+                    'Target base found, but landing base not found.',
+                    style='error'
                 )
+                count = 0
+                continue
 
-                if aruco_detection:
-                    self.log(f'Aruco detected.')
+            landing_bases_shape, landing_base_number = max(
+                landing_bases,
+                key=lambda l: l[0].confidence * l[1].confidence
+            )
 
-                    # number = get number of aruco
-                    self.log(f'Aruco number: {number}.')
+            count += 1
 
-                    if number % 3 == 0:
-                        multiple = 3
-                    elif number % 4 == 0:
-                        multiple = 4
-                    else:
-                        multiple = 5
-
-                    self.log(f'Aruco multiplo: {multiple}.')
-                    target_base['number'] = multiple
-
-                    # Search aruco shape
-                    for det in result:
-                        if det.class_name != 'aruco' and \
-                            (det.bbox[0] <= aruco_detection.center[0] <= det.bbox[2]) and \
-                            (det.bbox[1] <= aruco_detection.center[1] <= det.bbox[3]):
-
-                            self.log(f'Aruco shape: {det.class_name}.')
-                            target_base['shape'] = det.class_name
-                            break
-
-            # Search correct land base
-            if target_base['shape'] is not None:
-                for j, result in enumerate(results):
-                    same_shape = result.filter_by_class((target_base['shape']))
-                    same_number = result.filter_by_class((target_base['number']))
-
-                    for number in same_number:
-                        for shape in same_shape:
-                            if (shape.bbox[0] <= number.center[0] <= shape.bbox[2]) and \
-                                (shape.bbox[1] <= number.center[1] <= shape.bbox[3]):
-
-                                self.log('Find target base.')
-
-                                target_base['x'] = SEARCH_POINTS[j]['x']
-                                target_base['y'] = SEARCH_POINTS[j]['y']
-                                blackboard['target_base'] = target_base
-
-                                self.log('Completed successfully.')
-                                return SUCCEED
+            if count >= SEARCH_DETECTIONS_LOST_TOLERANCE:
+                self.log('Completed successfully.')
+                return SUCCEED
 
         self.log(
-            'Aruco/base not found.',
+            'Target and/or landing base not found.',
             style='error'
         )
         return FAIL
+
+
+    def get_number_of_aruco(img):
+        if img is None:
+            return None
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        dict_options = [
+            cv2.aruco.DICT_5X5_50,
+            cv2.aruco.DICT_5X5_100,
+            cv2.aruco.DICT_5X5_250,
+            cv2.aruco.DICT_5X5_1000,
+        ]
+
+        parameters = cv2.aruco.DetectorParameters()
+
+        for dict_id in dict_options:
+            aruco_dict = cv2.aruco.getPredefinedDictionary(dict_id)
+            detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
+
+            corners, ids, _ = detector.detectMarkers(gray)
+
+            if ids is not None:
+                return {
+                    "dict": dict_id,
+                    "ids": ids.flatten()
+                }
+
+        return None

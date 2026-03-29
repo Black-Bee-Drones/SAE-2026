@@ -37,7 +37,7 @@ class Initialize(State):
 
 
         self.log('Initializing \"target_base\"...')
-        blackboard['target_base'] = {} # {class, symbol}
+        blackboard['target_base'] = {} # {shape, number}
 
 
         self.log('Initializing MavrosDrone...')

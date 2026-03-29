@@ -18,19 +18,15 @@ CAMERA_CONFIG = IMX219Config(
 )
 
 MODEL_SOURCE = str(
-    Path(get_package_share_directory(package_name)) / "model" / "best.pt"
+    Path(get_package_share_directory(package_name)) / "model" / "teste26n.pt"
 )
 MODEL_CONFIDENCE_THRESHOLD = 0.8
 
 TAKEOFF_ALTITUDE = 5.0  # m
 TAKEOFF_SLEEP = 5  # s
 
-SEARCH_ALTITUDE = TAKEOFF_ALTITUDE
-SEARCH_POINTS = [
-    {'x': 0.0, 'y': 0.0},
-    {'x': 4.6, 'y': 0.0},
-    {'x': 4.6, 'y': 0.0},
-]
+SEARCH_NUMBER_DETECTIONS = 10
+SEARCH_DETECTIONS_LOST_TOLERANCE = 3
 
 PRECISE_LANDING_ALTITUDE = TAKEOFF_ALTITUDE
 PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE = 3
