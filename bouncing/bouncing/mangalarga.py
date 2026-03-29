@@ -6,7 +6,7 @@ import yasmin
 from yasmin_ros import set_ros_loggers
 from yasmin import StateMachine
 from yasmin_viewer import YasminViewerPub
-from yasmin_ros.basic_outcomes import SUCCEED, FAIL, ABORT
+from yasmin_ros.basic_outcomes import SUCCEED, FAIL, TIMEOUT, ABORT
 
 from bouncing.states import (
     Initialize,
@@ -39,7 +39,7 @@ class Bouncing(StateMachine):
         self.add_state(
             "PRECISE_LANDING",
             PreciseLanding(),
-            transitions={SUCCEED:"LAND", FAIL: "SEARCH", ABORT:"LAND"},
+            transitions={SUCCEED:"LAND", FAIL: "LAND", TIMEOUT: "LAND", ABORT:"LAND"},
         )
         self.add_state(
             "LAND",

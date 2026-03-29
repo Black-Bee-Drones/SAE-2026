@@ -1,16 +1,13 @@
-import time
-import cv2
+from rclpy.duration import Duration
 
 import yasmin
 from yasmin import State, Blackboard
-from yasmin_ros.basic_outcomes import SUCCEED, FAIL, ABORT
+from yasmin_ros.basic_outcomes import SUCCEED, FAIL, TIMEOUT, ABORT
 
-from nectar.control import MavrosDrone, MoveReference, PIDController
+from nectar.control import MavrosDrone, PIDController
 from nectar.vision import ImageHandler
-from nectar.ai import Detector
 
 from bouncing.constants import (
-    PRECISE_LANDING_ALTITUDE,
     PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE,
     PRECISE_LANDING_TIMEOUT,
     PRECISE_LANDING_VERTICAL_SPEED,
@@ -24,22 +21,18 @@ from bouncing.constants import (
 
 class PreciseLanding(State):
     def __init__(self):
-        super().__init__(outcomes=[SUCCEED, FAIL, ABORT])
+        super().__init__(outcomes=[SUCCEED, FAIL, TIMEOUT, ABORT])
 
         self.pid_x = PIDController(
             kp=CONTROLER_P_XY,
             ki=CONTROLER_I_XY,
             kd=CONTROLER_D_XY,
-            output_limits=0,
-            integral_limits=0,
         )
 
         self.pid_y = PIDController(
             kp=CONTROLER_P_XY,
             ki=CONTROLER_I_XY,
             kd=CONTROLER_D_XY,
-            output_limits=0,
-            integral_limits=0,
         )
 
 
@@ -69,14 +62,6 @@ class PreciseLanding(State):
             return ABORT
         image_handler: ImageHandler = blackboard['image_handler']
 
-        if ('detector' not in blackboard) or not blackboard['detector']:
-            self.log(
-                'Detector not available.',
-                style='error'
-            )
-            return ABORT
-        detector: Detector = blackboard['detector']
-
         if ('target_base' not in blackboard) or not blackboard['target_base']:
             self.log(
                 '\"target_base\" not available.',
@@ -87,19 +72,11 @@ class PreciseLanding(State):
 
         self.log('Start.')
 
-        self.log(f'Go to target base: {target_base}')
-        drone.offboard_position(
-            x=target_base['x'],
-            y=target_base['y'],
-            z=PRECISE_LANDING_ALTITUDE,
-            yaw=0.0,
-            reference = MoveReference.TAKEOFF,
-        )
-
-        self.log(f'Start PID in target base: {target_base}.')
+        self.log(f'Start PID in landing base: {target_base}.')
         lost_detection_count = 0
         start = self.node.get_clock().now()
-        while (self.node.get_clock().now() - start).nanoseconds / 1e9 < PRECISE_LANDING_TIMEOUT:
+        duration = Duration(seconds=PRECISE_LANDING_TIMEOUT)
+        while self.node.get_clock().now() - start < duration:
 
             if drone.rel_alt <= PRECISE_LANDING_LAND_ALTITUDE:
                 self.log(f'Completed successfully.')
@@ -107,59 +84,70 @@ class PreciseLanding(State):
                 drone.delay(1.0)
                 return SUCCEED
 
-            self.log('Take photo.')
+            self.log(f'Take and process photo.')
             result = image_handler.take_photo()
 
-            annotated = detector.draw_detections(result.image, result)
-            name = f'photo-{time.time_ns()}.png'
-            cv2.imwrite(name, annotated)
-            self.log(f'Save annotated photo: {name}.')
+            # Search number inside shape
+            landing_bases = []
+            for s in list(d for d in result if d.class_name == target_base['shape']):  # all target shapes
+                for n in list(d for d in result if d.class_name == target_base['number']):  # all target numbers
+                    if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
+                        landing_bases.append((s, n))
 
-            error_x, error_y = None, None
-
-            same_number = result.filter_by_class_id((target_base['number']))
-
-            if len(number) == 1:
-                # Aling number
-                error_x, error_y = same_number[0].center
-            else:
-                same_shape = result.filter_by_class_id((target_base['shape']))
-
-                if len(number) == 1:
-                    # Aling shape
-                    error_x, error_y = same_shape[0].center
-
-                else:
-                    for number in same_number:
-                        for shape in same_shape:
-                            if (shape.bbox[0] <= number.center[0] <= shape.bbox[2]) and \
-                                (shape.bbox[1] <= number.center[1] <= shape.bbox[3]):
-
-                                # Aling number inside the shape
-                                error_x, error_y = same_number[0].center
-                                break
-
-            if (error_x is not None) and (error_y is not None):
-                lost_detection_count = 0
-
-                output_x = self.pid_x.update(error_x)
-                output_y = self.pid_y.update(error_y)
-
-                self.log(f'Detection: error_x={error_x}, error_y={error_y}, output_x={output_x}, output_y={output_y}')
-                drone.move_velocity(
-                    vx = output_x,
-                    vy = output_y,
-                    vz = -PRECISE_LANDING_VERTICAL_SPEED if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2) else 0.0,
-                    vyaw = 0.0,
+            if landing_bases:
+                landing_bases_shape, landing_base_number = max(
+                    landing_bases,
+                    key=lambda l: l[0].confidence * l[1].confidence
                 )
 
+            # Search number
             else:
-                lost_detection_count += 1
-                self.log(f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
+                self.log('Shape not found.')
+                numbers = list(d for d in result if d.class_name == target_base['number'])
 
-                if lost_detection_count >= PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE:
-                    self.log(f'FAIL, lost detection.')
-                    return FAIL
+                if not numbers:
+                    lost_detection_count += 1
+                    self.log(
+                        'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).',
+                        style='error'
+                    )
 
-        self.log(f'FAIL, timeout.')
-        return FAIL
+                    if lost_detection_count >= PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE:
+                        self.log(
+                            'It lost detection many times.',
+                            style='error'
+                        )
+                        return FAIL
+                    continue
+
+                elif len(numbers) == 1:
+                    landing_base_number = numbers.pop()
+
+                else:
+                    landing_base_number = max(
+                        numbers,
+                        key=lambda n: n.confidence * n.area
+                    )
+
+            lost_detection_count = 0
+
+            h, w = result.image.shape[:2]
+            center = landing_base_number.center
+
+            # normalized error
+            error_x = (center[0] - w) / drone.rel_alt
+            error_y = (center[1] - h) / drone.rel_alt
+
+            output_x = self.pid_x.update(error_x)
+            output_y = self.pid_y.update(error_y)
+
+            self.log(f'Detection: \n\terror_x={error_x}, \n\terror_y={error_y}, \n\toutput_x={output_x}, \n\toutput_y={output_y}')
+            drone.move_velocity(
+                vx = output_x,
+                vy = output_y,
+                vz = -PRECISE_LANDING_VERTICAL_SPEED if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2) else 0.0,
+                vyaw = 0.0,
+            )
+
+        self.log('Timeout.')
+        return TIMEOUT

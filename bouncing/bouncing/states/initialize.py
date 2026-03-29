@@ -8,7 +8,6 @@ from nectar.vision import ImageHandler
 from nectar.ai import Detector
 
 from bouncing.constants import (
-    IS_INDOOR,
     CAMERA_IMAGE_SOURCE,
     CAMERA_CONFIG,
     MODEL_SOURCE,
