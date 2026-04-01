@@ -8,6 +8,8 @@ from yasmin import Blackboard
 from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
+from ..parameters import SIMULATION
+
 
 from ..parameters import LOCATIONS
 
@@ -19,7 +21,6 @@ class Init(State):
         super().__init__(outcomes=[SUCCEED, ABORT, "GROUND_MONITOR"])
 
         connection = MavlinkConnection("drone")
-        connection.connect("/dev/ttyTHS1",921600)
         self.drone = Drone(connection)
         self.coords_file = os.path.expanduser("~/.faulty_or_not_mission_coords.json")
 
@@ -190,6 +191,11 @@ class Init(State):
             blackboard["locations"] = locations
 
             blackboard["drone"] = self.drone
+            con_string = "udpin:0.0.0.0:14550" if SIMULATION else "/dev/ttyTHS1"
+            self.drone.connection.connect(con_string, 921600)
+
+            self.drone.set_mode(self.drone.FlightMode.GUIDED).wait()
+
 
             return SUCCEED
         except KeyboardInterrupt:

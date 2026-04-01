@@ -46,7 +46,14 @@ class AudioFeedback(State):
             if gauge_reading != -1:
                 packed_data = (gauge_reading << 5) | (control_index & 0x1F)
             else:
-                packed_data = ((random.randint(0, 5)) << 5) | (control_index & 0x1F) | 0b00010000  # Set bit 4 for "uncertain" class
+                if control_index == len(locations) - 1:
+                    self.node.get_logger().info(f"Final waypoint {control_index} processed, ending mission.")
+                    return "END"
+
+                blackboard["control_index"] = control_index + 1
+                self.node.get_logger().info(f"Incremented control_index: {control_index} -> {blackboard['control_index']}")
+                return SUCCEED
+                
 
             publisher = blackboard["gauge_publisher"]
             msg = UInt8()
@@ -78,6 +85,9 @@ class AudioFeedback(State):
             cv2.imwrite(f"/home/jetson/Pictures/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
 
         if control_index == len(locations) - 1:
+            self.node.get_logger().info(f"Final waypoint {control_index} processed, ending mission.")
             return "END"
+
         blackboard["control_index"] = control_index + 1
+        self.node.get_logger().info(f"Incremented control_index: {control_index} -> {blackboard['control_index']}")
         return SUCCEED

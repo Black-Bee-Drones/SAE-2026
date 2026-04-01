@@ -1,7 +1,11 @@
 from yasmin import StateMachine
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
+import threading
+
 import rclpy
+
+from faulty_or_not.simtools import CameraSubscriber
 
 from faulty_or_not.states import (
     Init, 
@@ -12,11 +16,11 @@ from faulty_or_not.states import (
     ReturnToLaunch,
     GroundMonitor
 )
-from faulty_or_not.parameters import MODEL_PATH
+from faulty_or_not.parameters import MODEL_PATH, SIMULATION
 
 
 class FaultyOrNot(StateMachine):
-    def __init__(self):
+    def __init__(self, cam=None):
         super().__init__(outcomes=[SUCCEED, ABORT, "END"])
         self.add_state(
             "INIT",
@@ -40,7 +44,7 @@ class FaultyOrNot(StateMachine):
         )
         self.add_state(
             "GAUGE_READING",
-            GaugeReading(model_path=MODEL_PATH),
+            GaugeReading(model_path=MODEL_PATH, cam=cam),
             transitions={SUCCEED:"AUDIO_FEEDBACK", ABORT:"RETURN_TO_LAUNCH"},
         )
         self.add_state(
@@ -62,9 +66,14 @@ def main():
     rclpy.init()
     
     try:
+        if SIMULATION:
+            cam = CameraSubscriber()
+            thread = threading.Thread(target=rclpy.spin, args=(cam,), daemon=True)
+            thread.start()
+
         # Create the state machine
-        sm = FaultyOrNot()
-        
+        sm = FaultyOrNot(cam=cam)
+
         # Execute the state machine
         outcome = sm()
         

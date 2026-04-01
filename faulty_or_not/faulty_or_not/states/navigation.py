@@ -15,10 +15,14 @@ class Navigation(State):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.drone: Drone = None
         self.node = YasminNode.get_instance()
-        self._diamond_stop = threading.Event()
+        self._stop_deep_search = threading.Event()
 
-    def stop_diamond(self):
-        self._diamond_stop.set()
+
+    def stop_movement(self):
+        try:
+            self.drone.runtime.unregister("flight_goto_local")
+        except Exception as e:
+            yasmin.YASMIN_LOG_WARN(f"Failed to stop movement: {e}")
 
     def execute(self, blackboard: Blackboard):
         if "drone" not in blackboard:
@@ -26,25 +30,42 @@ class Navigation(State):
             return ABORT
         self.drone = blackboard["drone"]
 
+        if "locations" not in blackboard or "control_index" not in blackboard:
+            yasmin.YASMIN_LOG_ERROR("Missing mission state in blackboard (locations/control_index).")
+            return ABORT
+
         locations = blackboard["locations"]
         control_index = blackboard["control_index"]
 
-        offsets = [
-            (1, 0, 0),
-            (0, -1, 0),
-            (-1, 0, 0),
-            (0, 1, 0)
-        ]
+        if not locations:
+            yasmin.YASMIN_LOG_ERROR("No mission locations defined in blackboard.")
+            return ABORT
 
-        self._diamond_stop.clear()
-
-        def do_diamond(x, y, z, i = 0):
-            handler = self.drone.goto_local(x=x, y=y, z=z)
-            while not handler.done() and not self._diamond_stop.is_set():
-                time.sleep(1 / 5)
-            if not self._diamond_stop.is_set() and i < len(offsets):
-                do_diamond(x + offsets[i][0], y + offsets[i][1], z + offsets[i][2], (i + 1))
+        if control_index >= len(locations):
+            yasmin.YASMIN_LOG_WARN(
+                f"Control index {control_index} out of bounds for {len(locations)} locations; finishing navigation."
+            )
+            return ABORT
 
         x, y, z = locations[control_index]
         blackboard["navigation_state"] = self
-        t = threading.Thread(target=do_diamond, args=(x, y, z)).start()
+
+        yasmin.YASMIN_LOG_INFO(
+            f"Navigation: waypoint {control_index + 1}/{len(locations)} -> x={x}, y={y}, z={z}"
+        )
+
+        try:
+            handler = self.drone.goto_local(x=x, y=y, z=z)
+            handler.wait(timeout=20)
+        
+
+            yasmin.YASMIN_LOG_INFO(f"Reached waypoint {control_index}.")
+
+        except Exception as e:
+            yasmin.YASMIN_LOG_WARN(f"Failed to navigate to waypoint {control_index}: {e}")
+            self.stop_movement()
+            return ABORT
+
+        return SUCCEED
+    
+        # TODO: Implement retry waypoint logic

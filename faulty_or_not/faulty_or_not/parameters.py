@@ -5,7 +5,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 
-LOCATIONS = [(-6,2,-3.2),(0,-2.5,-3.2),(5,2.5,-3.2)]
+LOCATIONS = [(-6,-2,-3.2),(0,2.5,-3.2),(5,-2.5,-3.2)]
 
 # Flight related
 TAKEOFF_ALTITUDE = 3.2
@@ -20,3 +20,4 @@ except:
     package_root = os.path.dirname(current_dir)
     MODEL_PATH = os.path.join(package_root, 'models', 'best.pt')
 
+SIMULATION = True

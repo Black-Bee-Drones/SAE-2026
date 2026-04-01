@@ -23,7 +23,9 @@ class Takeoff(State):
         yasmin.YASMIN_LOG_INFO("Taking off...")
 
         try:
-            self.drone.takeoff(TAKEOFF_ALTITUDE).wait(timeout=10)
+            self.drone.arm().wait()
+            self.drone.takeoff(TAKEOFF_ALTITUDE).wait(timeout=20)
+            print("Primary origin:", self.drone.primary_origin)
             yasmin.YASMIN_LOG_INFO("Takeoff successful.")
             return SUCCEED
         except Exception as e:

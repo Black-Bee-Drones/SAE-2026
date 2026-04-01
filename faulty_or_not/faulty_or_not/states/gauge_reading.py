@@ -9,20 +9,20 @@ from nectar.ai.detection.models.ultralytics import UltralyticsModel
 
 from .navigation import Navigation
 
-# from nectar.vision.camera.config import OpenCVConfig
-# from nectar.vision.camera.drivers.opencv_cam import OpenCVCam
-from nectar.vision.camera.drivers.oakd_cam import OakdCam
-from nectar.vision.camera.config import OakDConfig
+from nectar.vision.camera.config import OpenCVConfig
+from nectar.vision.camera.drivers.opencv_cam import OpenCVCam
+from ..parameters import SIMULATION
 
 from sensor_msgs.msg import CompressedImage
 
 
 class GaugeReading(State):
-    def __init__(self, model_path, confidence_threshold=0.8):
+    def __init__(self, model_path, confidence_threshold=0.8, cam=None):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.node = YasminNode.get_instance()
         self.confidence_threshold = confidence_threshold
-        
+        self.cam = cam
+
         # Initialize YOLODetector from Mirela SDK
         try:
             self.detector = UltralyticsModel(model_name=model_path)
@@ -41,26 +41,23 @@ class GaugeReading(State):
         if "inference_image_publisher" not in blackboard:
             blackboard["inference_image_publisher"] = self.node.create_publisher(CompressedImage, "/gauge/compressed", 10)
 
-        config = OakDConfig()
 
-        # config = OpenCVConfig(
-        #     name="webcam",
-        #     device_index=0,
-        #     width=640,
-        #     height=640,
-        #     fps=30,
-        #     fourcc="MJPG",
-        #     buffer_size=1,
-        #     threaded=True,
-        # )
+        if self.cam is None:
+            config = OpenCVConfig(
+                name="webcam",
+                device_index=0,
+                fps=30,
+                fourcc="MJPG",
+                buffer_size=1,
+                threaded=True,
+            )
 
-        self.camera = OakdCam(config)
-        # self.camera = OpenCVCam(config)
-        self.camera.start()
+            self.cam = OpenCVCam(config)
+            self.cam.start()
             
         # Configuration
         max_duration = 60.0  
-        consecutive_limit = 3 
+        consecutive_limit = 3
         
         # System state
         start_time = time.time()
@@ -74,7 +71,8 @@ class GaugeReading(State):
         
         try:
             while (time.time() - start_time) < max_duration:
-                frame = self.camera.get_frame()
+
+                frame = self.cam.get_frame() if not SIMULATION else self.cam.frame
 
                 if frame is None:
                     self.node.get_logger().warn(
@@ -162,12 +160,10 @@ class GaugeReading(State):
                     consecutive_count = 0
                     last_class_id = None
         finally:
-            self.camera.close()
-            # Stop the diamond flight immediately
-            nav : Navigation = blackboard["navigation_state"]
-            if nav is not None:
-                nav.stop_diamond()
-    
+            try:
+                self.cam.close()
+            except Exception:
+                pass
         
         if last_class_id is not None:            
             # Save results to blackboard
