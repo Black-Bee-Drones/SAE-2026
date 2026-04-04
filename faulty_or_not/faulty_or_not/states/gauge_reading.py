@@ -13,15 +13,21 @@ from nectar.vision.camera.config import OpenCVConfig
 from nectar.vision.camera.drivers.opencv_cam import OpenCVCam
 from ..parameters import SIMULATION
 
+from zaxis.drone import Drone
+
 from sensor_msgs.msg import CompressedImage
 
+import threading
+
+from zaxis.runtime import CommandHandle
 
 class GaugeReading(State):
-    def __init__(self, model_path, confidence_threshold=0.8, cam=None):
+    def __init__(self, model_path, confidence_threshold=0.85, cam=None):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.node = YasminNode.get_instance()
         self.confidence_threshold = confidence_threshold
         self.cam = cam
+        self._stop_event = threading.Event()
 
         # Initialize YOLODetector from Mirela SDK
         try:
@@ -30,6 +36,64 @@ class GaugeReading(State):
         except Exception as e:
             self.node.get_logger().error(f"Error loading YOLODetector: {e}")
             self.detector = None
+
+        self.drone : Drone = None
+
+    def expanding_square(self, max_step, step_size):
+        """
+        Expanding square search in FRD frame.
+        Distances: 1, 1, 2, 2, 3, 3, ... × step_size
+        """
+        for step in range(1, max_step + 1):
+            if self._stop_event.is_set():
+                return
+
+            dist = ((step + 1) // 2) * step_size
+
+            if step % 4 == 1:    # Forward
+                offset = (0, dist, 0)
+            elif step % 4 == 2:  # Right
+                offset = (dist, 0, 0)
+            elif step % 4 == 3:  # Backward
+                offset = (0, -dist, 0)
+            else:                 # Left (step % 4 == 0)
+                offset = (-dist, 0, 0)
+
+            task = self.drone.goto_offset(*offset, ned=False, face_wp=False) 
+
+            if task is not None:
+                try:
+                    while not task.done():
+                        if self._stop_event.is_set():
+                            task.stop()
+                            return
+                        time.sleep(0.1)
+                except Exception:
+                    pass
+
+    def get_square_crops(self, frame, overlap=0.3):
+        """Sliding window square crops covering the full FOV."""
+        h, w = frame.shape[:2]
+        size = min(h, w)
+        step = int(size * (1 - overlap))
+        crops = []
+
+        if w >= h:
+            x = 0
+            while x + size <= w:
+                crops.append((frame[0:size, x:x+size], x, 0))
+                x += step
+            if not crops or crops[-1][1] + size < w:
+                crops.append((frame[0:size, w-size:w], w-size, 0))
+        else:
+            y = 0
+            while y + size <= h:
+                crops.append((frame[y:y+size, 0:size], 0, y))
+                y += step
+            if not crops or crops[-1][2] + size < h:
+                crops.append((frame[h-size:h, 0:size], 0, h-size))
+
+        return crops
 
     def execute(self, blackboard: Blackboard):
         """Execute capture and inference with timeout and consecutive detections"""
@@ -41,6 +105,10 @@ class GaugeReading(State):
         if "inference_image_publisher" not in blackboard:
             blackboard["inference_image_publisher"] = self.node.create_publisher(CompressedImage, "/gauge/compressed", 10)
 
+        if "drone" in blackboard:
+            self.drone = blackboard["drone"]
+
+        self._stop_event.clear()
 
         if self.cam is None:
             config = OpenCVConfig(
@@ -56,11 +124,12 @@ class GaugeReading(State):
             self.cam.start()
             
         # Configuration
-        max_duration = 60.0  
-        consecutive_limit = 3
+        max_duration = 100.0  
+        consecutive_limit = 4
         
         # System state
         start_time = time.time()
+        time_last_det = None
         consecutive_count = 0
         last_class_id = None
         best_detection_overall = None
@@ -68,11 +137,32 @@ class GaugeReading(State):
         best_inference_image_overall = None
         last_inference_image = None
         frame_count = 0
+        frame_location = None
+
+        t = None
+        goto_handler : CommandHandle = blackboard["goto_handler"]
         
         try:
             while (time.time() - start_time) < max_duration:
+                if time_last_det is not None and best_detection_overall is not None and time.time() - time_last_det > 10.0:
+                    self._stop_event.set()
+                    break
+
+                if not goto_handler.done():
+                    start_time = time.time()
+
+                if best_detection_overall is not None and t is not None and t.is_alive():
+                    self.node.get_logger().info("Best detection found, overriding default behavior to only 1 detection.")
+                    self._stop_event.set()
+                    break
+
+                if best_detection_overall is None and (t is None or not t.is_alive()) and time.time() - start_time > 5.0:
+                    self._stop_event.clear()
+                    t = threading.Thread(target=self.expanding_square, args=(15, 0.2), daemon=True)
+                    t.start()
 
                 frame = self.cam.get_frame() if not SIMULATION else self.cam.frame
+                frame_location = self.drone.capture_origin()
 
                 if frame is None:
                     self.node.get_logger().warn(
@@ -82,21 +172,26 @@ class GaugeReading(State):
                     continue
                 frame_count += 1
 
-                height, width = frame.shape[:2]
-                if height > width:
-                    diff = height - width
-                    frame = frame[diff // 2:diff // 2 + width, :]
-                elif width > height:
-                    diff = width - height
-                    frame = frame[:, diff // 2:diff // 2 + height]
+                # Process current frame detections across all crops
+                best_detection = None
+                best_confidence = 0.0
 
-                # Execute detection
-                detection_result = self.detector.detect(frame, conf=self.confidence_threshold)
+                for crop, x_off, y_off in self.get_square_crops(frame):
+                    detection_result = self.detector.detect(crop, conf=self.confidence_threshold)
+                    detections = detection_result if isinstance(detection_result, list) else detection_result.detections
 
-                # Pass the detection_result to draw_detections
-                last_inference_image = self.detector.draw_detections(frame, detection_result)
+                    for detection in detections:
+                        if detection.confidence > best_confidence:
+                            best_detection = detection
+                            best_confidence = detection.confidence
+                            last_inference_image = self.detector.draw_detections(crop, detection_result)
+
+
                 # Compress OpenCV image to JPEG
-                _, buffer = cv2.imencode('.jpg', last_inference_image, [cv2.IMWRITE_JPEG_QUALITY, 85])  # 85% quality
+                _, buffer = cv2.imencode('.jpg', (last_inference_image if best_detection is not None else frame), [cv2.IMWRITE_JPEG_QUALITY, 85])  # 85% quality
+
+                if best_detection is not None:
+                    time_last_det = time.time()
 
                 # Create compressed message
                 compressed_msg = CompressedImage()
@@ -106,27 +201,12 @@ class GaugeReading(State):
 
                 image_publisher = blackboard["inference_image_publisher"]
                 image_publisher.publish(compressed_msg)
-                
 
-                # Log detection status
-                detections = detection_result if isinstance(detection_result, list) else detection_result.detections
-                num_detections = len(detections)
+                num_detections = 1 if best_detection is not None else 0
                 self.node.get_logger().info(
                     f"Frame {frame_count}: {num_detections} detection(s) found"
                 )
 
-                # Process current frame detections
-                best_detection = None
-                best_confidence = 0.0
-                
-                for detection in detections:
-                    confidence = detection.confidence
-                    class_id = detection.class_id
-                    
-                    if confidence > best_confidence:
-                        best_detection = detection
-                        best_confidence = confidence
-                
                 # Update overall best detection
                 if best_detection is not None:
                     class_id = best_detection.class_id
@@ -155,12 +235,9 @@ class GaugeReading(State):
                             f"SUCCESS: {consecutive_limit} consecutive detections of class {class_id}!"
                         )
                         break
-                else:
-                    # Reset counter if nothing detected
-                    consecutive_count = 0
-                    last_class_id = None
         finally:
             try:
+                self._stop_event.set()
                 self.cam.close()
             except Exception:
                 pass

@@ -66,6 +66,7 @@ def main():
     rclpy.init()
     
     try:
+        cam=None
         if SIMULATION:
             cam = CameraSubscriber()
             thread = threading.Thread(target=rclpy.spin, args=(cam,), daemon=True)

@@ -48,16 +48,15 @@ class Navigation(State):
             return ABORT
 
         x, y, z = locations[control_index]
-        blackboard["navigation_state"] = self
 
         yasmin.YASMIN_LOG_INFO(
             f"Navigation: waypoint {control_index + 1}/{len(locations)} -> x={x}, y={y}, z={z}"
         )
 
         try:
-            handler = self.drone.goto_local(x=x, y=y, z=z)
-            handler.wait(timeout=20)
-        
+            handler = self.drone.goto_local(x=x, y=y, z=z, face_wp=True)
+            time.sleep(5)
+            blackboard["goto_handler"] = handler
 
             yasmin.YASMIN_LOG_INFO(f"Reached waypoint {control_index}.")
 

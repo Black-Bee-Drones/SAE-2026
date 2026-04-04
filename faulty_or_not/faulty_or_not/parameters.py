@@ -5,10 +5,10 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 
-LOCATIONS = [(-6,-2,-3.2),(0,2.5,-3.2),(5,-2.5,-3.2)]
+LOCATIONS = [(-6,-2,-2.5),(0,2.5,-2.5),(5,-2.5,-2.5)]
 
 # Flight related
-TAKEOFF_ALTITUDE = 3.2
+TAKEOFF_ALTITUDE = 2.5
 
 # AI Model path 
 try:
