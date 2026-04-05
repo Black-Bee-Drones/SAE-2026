@@ -21,6 +21,9 @@ import threading
 
 from zaxis.runtime import CommandHandle
 
+PIXELS_PER_METER = 1.0 / 0.0010210406  # k = 0.0010210406 m/px
+
+
 class GaugeReading(State):
     def __init__(self, model_path, confidence_threshold=0.85, cam=None):
         super().__init__(outcomes=[SUCCEED, ABORT])
@@ -95,6 +98,41 @@ class GaugeReading(State):
 
         return crops
 
+    def _center_on_detection(self, detection, x_off, y_off, frame_shape, frame_location):
+
+        K = 0.0010210406  # meters per pixel
+
+        h, w = frame_shape[:2]
+        frame_cx = w / 2.0
+        frame_cy = h / 2.0
+
+        x1, y1, x2, y2 = detection.xyxy
+        # Reconstruct bbox center in full-frame coordinates
+        bbox_cx = (x1 + x2) / 2.0 + x_off
+        bbox_cy = (y1 + y2) / 2.0 + y_off
+
+        dx_px = bbox_cx - frame_cx  # positive → bbox is to the right
+        dy_px = bbox_cy - frame_cy  # positive → bbox is below center (further back)
+
+        forward_m = -dy_px * K   # image Y inverted → FRD X
+        right_m   =  dx_px * K  # image X direct   → FRD Y
+
+        # Maintain current altitude (z=0 relative to origin keeps same height)
+        current_z = self.drone.local_position.z
+
+        self.node.get_logger().info(
+            f"[GaugeReading] Centering: dx={dx_px:.1f}px → right={right_m:.3f}m, "
+            f"dy={dy_px:.1f}px → fwd={forward_m:.3f}m"
+        )
+
+        task = self.drone.goto_local(
+            x=forward_m,
+            y=right_m,
+            z=current_z,
+            origin=frame_location,
+        )
+        return task
+
     def execute(self, blackboard: Blackboard):
         """Execute capture and inference with timeout and consecutive detections"""
         
@@ -125,7 +163,7 @@ class GaugeReading(State):
             
         # Configuration
         max_duration = 100.0  
-        consecutive_limit = 4
+        consecutive_limit = 20
         
         # System state
         start_time = time.time()
@@ -138,6 +176,7 @@ class GaugeReading(State):
         last_inference_image = None
         frame_count = 0
         frame_location = None
+        centering_done = False  # one-shot flag
 
         t = None
         goto_handler : CommandHandle = blackboard["goto_handler"]
@@ -175,6 +214,8 @@ class GaugeReading(State):
                 # Process current frame detections across all crops
                 best_detection = None
                 best_confidence = 0.0
+                best_crop_x_off = 0
+                best_crop_y_off = 0
 
                 for crop, x_off, y_off in self.get_square_crops(frame):
                     detection_result = self.detector.detect(crop, conf=self.confidence_threshold)
@@ -184,8 +225,22 @@ class GaugeReading(State):
                         if detection.confidence > best_confidence:
                             best_detection = detection
                             best_confidence = detection.confidence
+                            best_crop_x_off = x_off
+                            best_crop_y_off = y_off
                             last_inference_image = self.detector.draw_detections(crop, detection_result)
 
+                # On first detection ever, center the drone over the manometer
+                if best_detection is not None and not centering_done:
+                    centering_done = True
+                    self._stop_event.set()  # halt expanding square
+                    self.node.get_logger().info("[GaugeReading] First detection — centering drone.")
+                    self._center_on_detection(
+                        best_detection,
+                        best_crop_x_off,
+                        best_crop_y_off,
+                        frame.shape,
+                        frame_location,
+                    )
 
                 # Compress OpenCV image to JPEG
                 _, buffer = cv2.imencode('.jpg', (last_inference_image if best_detection is not None else frame), [cv2.IMWRITE_JPEG_QUALITY, 85])  # 85% quality
