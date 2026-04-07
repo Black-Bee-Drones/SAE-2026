@@ -5,14 +5,13 @@ from bouncing.setup import package_name
 from ament_index_python.packages import get_package_share_directory
 from pathlib import Path
 
-from mirela_sdk.image_processing.camera import IMX219Config
+from mirela_sdk.image_processing.camera import OpenCVConfig
 
 
-CAMERA_IMAGE_SOURCE = 'imx219'
-CAMERA_CONFIG = IMX219Config(
-    width=1640,
-    height=1232,
-    flip=2,
+CAMERA_IMAGE_SOURCE = 'webcam'
+CAMERA_CONFIG = OpenCVConfig(
+    width=1280,
+    height=720,
 )
 
 MODEL_SOURCE = str(
