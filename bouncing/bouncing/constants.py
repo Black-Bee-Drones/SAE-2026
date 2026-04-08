@@ -1,11 +1,9 @@
 # Constants
 
-from bouncing.setup import package_name
-
 from ament_index_python.packages import get_package_share_directory
 from pathlib import Path
 
-from mirela_sdk.image_processing.camera import OpenCVConfig
+from nectar.vision import OpenCVConfig
 
 
 CAMERA_IMAGE_SOURCE = 'webcam'
@@ -15,7 +13,7 @@ CAMERA_CONFIG = OpenCVConfig(
 )
 
 MODEL_SOURCE = str(
-    Path(get_package_share_directory(package_name)) / "model" / "teste26n.pt"
+    Path(get_package_share_directory("bouncing")) / "models" / "teste26n.pt"
 )
 MODEL_CONFIDENCE_THRESHOLD = 0.8
 

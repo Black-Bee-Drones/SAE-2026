@@ -19,7 +19,7 @@ class Takeoff(State):
 
 
     def log(self, msg, style='info'):
-        class_name = f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+        class_name = f'{self.__class__.__name__}({", ".join([cls.__name__ for cls in self.__class__.__bases__])})'
 
         if style == 'info':
             yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')

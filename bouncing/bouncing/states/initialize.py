@@ -3,7 +3,7 @@ from yasmin import State, Blackboard
 from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from nectar.control import MavrosDrone, MavrosConfigpython
+from nectar.control import MavrosDrone, MavrosConfig
 from nectar.vision import ImageHandler
 from nectar.ai import Detector
 
@@ -23,7 +23,7 @@ class Initialize(State):
 
 
     def log(self, msg, style='info'):
-        class_name = f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+        class_name = f'{self.__class__.__name__}({", ".join([cls.__name__ for cls in self.__class__.__bases__])})'
 
         if style == 'info':
             yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
@@ -41,7 +41,7 @@ class Initialize(State):
 
         self.log('Initializing MavrosDrone...')
         try:
-            config = MavrosConfigpython()
+            config = MavrosConfig()
             blackboard['drone'] = MavrosDrone(
                 config=config,
                 node=self.node,

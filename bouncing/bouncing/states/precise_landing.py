@@ -7,7 +7,8 @@ from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, TIMEOUT, ABORT
 
 from nectar.control import MavrosDrone, PIDController
-from nectar.vision import ImageHandler, Detector
+from nectar.vision import ImageHandler
+from nectar.ai import Detector
 
 from bouncing.constants import (
     PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE,
@@ -39,7 +40,7 @@ class PreciseLanding(State):
 
 
     def log(self, msg, style='info'):
-        class_name = f'{self.__class__.__name__}({', '.join([cls.__name__ for cls in self.__class__.__bases__])})'
+        class_name = f'{self.__class__.__name__}({", ".join([cls.__name__ for cls in self.__class__.__bases__])})'
 
         if style == 'info':
             yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
