@@ -40,7 +40,7 @@ class Takeoff(State):
 
         self.log(f'Taking off to altitude: {TAKEOFF_ALTITUDE}m...')
         try:
-            drone.arm_takeoff(TAKEOFF_ALTITUDE)
+            drone.takeoff(TAKEOFF_ALTITUDE)
             drone.delay(TAKEOFF_SLEEP)
         except Exception as e:
             self.log(

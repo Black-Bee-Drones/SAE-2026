@@ -85,6 +85,9 @@ class Initialize(State):
                 image_processing_callback=detector.detect,
             )
 
+            self.log('Open camera...')
+            image_handler.open()
+
             self.log('Take testing photo...')
             image_handler.take_photo()
 
