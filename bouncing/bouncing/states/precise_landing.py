@@ -4,6 +4,7 @@ from rclpy.duration import Duration
 
 import yasmin
 from yasmin import State, Blackboard
+from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, TIMEOUT, ABORT
 
 from nectar.control import MavrosDrone, PIDController
@@ -25,6 +26,8 @@ from bouncing.constants import (
 class PreciseLanding(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, FAIL, TIMEOUT, ABORT])
+
+        self.node = YasminNode.get_instance()
 
         self.pid_x = PIDController(
             kp=CONTROLER_P_XY,
@@ -73,6 +76,14 @@ class PreciseLanding(State):
             return ABORT
         target_base: dict = blackboard['target_base']
 
+        if ('detector' not in blackboard) or not blackboard['detector']:
+            self.log(
+                f'Detector not available.',
+                style='error'
+            )
+            return ABORT
+        detector: Detector = blackboard['detector']
+
         self.log('Start.')
 
         self.log(f'Start PID in landing base: {target_base}.')
@@ -83,19 +94,19 @@ class PreciseLanding(State):
 
             if drone.rel_alt <= PRECISE_LANDING_LAND_ALTITUDE:
                 self.log(f'Completed successfully.')
-                drone.move_velocity()
+                drone.move_velocity(0.0, 0.0, 0.0, 0.0)
                 drone.delay(1.0)
                 return SUCCEED
 
             self.log(f'Take and process photo.')
-            result = image_handler.take_photo()
+            img, result = image_handler.take_photo()
 
             now = self.node.get_clock().now().nanoseconds
             name = f'photo-{now}.png'
-            cv2.imwrite(name, result.image)
+            cv2.imwrite(name, img)
             self.log(f'Save raw photo: {name}.')
 
-            annotated = Detector.draw_detections(result.image, result)
+            annotated = detector.draw_detections(img, result)
             annotated_name = f'photo-{now}-annotated.png'
             cv2.imwrite(annotated_name, annotated)
             self.log(f'Save annotated photo: {annotated_name}.')
@@ -103,7 +114,7 @@ class PreciseLanding(State):
             # Search number inside shape
             landing_bases = []
             for s in list(d for d in result if d.class_name == target_base['shape']):  # all target shapes
-                for n in list(d for d in result if d.class_name == target_base['number']):  # all target numbers
+                for n in list(d for d in result if d.class_name == str(target_base['number'])):  # all target numbers
                     if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
                         landing_bases.append((s, n))
 
@@ -115,13 +126,14 @@ class PreciseLanding(State):
 
             # Search number
             else:
-                self.log('Shape not found.')
-                numbers = list(d for d in result if d.class_name == target_base['number'])
+                self.log('Shape not found. Try get number.')
+                numbers = list(d for d in result if d.class_name == str(target_base['number']))
 
                 if not numbers:
                     lost_detection_count += 1
+                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
                     self.log(
-                        'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).',
+                        f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).',
                         style='error'
                     )
 
@@ -144,12 +156,12 @@ class PreciseLanding(State):
 
             lost_detection_count = 0
 
-            h, w = result.image.shape[:2]
+            h, w = img.shape[:2]
             center = landing_base_number.center
 
             # normalized error
-            error_x = (center[0] - w) / drone.rel_alt
-            error_y = (center[1] - h) / drone.rel_alt
+            error_x = (center[0] - (w / 2)) / drone.rel_alt
+            error_y = (center[1] - (h / 2)) / drone.rel_alt
 
             output_x = self.pid_x.update(error_x)
             output_y = self.pid_y.update(error_y)

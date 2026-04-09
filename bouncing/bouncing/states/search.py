@@ -38,6 +38,14 @@ class Search(State):
             return ABORT
         image_handler: ImageHandler = blackboard['image_handler']
 
+        if ('detector' not in blackboard) or not blackboard['detector']:
+            self.log(
+                f'Detector not available.',
+                style='error'
+            )
+            return ABORT
+        detector: Detector = blackboard['detector']
+
         self.log('Start.')
 
         target_base = {} # {shape, number}
@@ -45,31 +53,32 @@ class Search(State):
         count = 0
         for i in range(SEARCH_NUMBER_DETECTIONS):
             self.log(f'Take and process photo {i+1}/{SEARCH_NUMBER_DETECTIONS}.')
-            result = image_handler.take_photo()
+            img, result = image_handler.take_photo()
+            self.log(f'detection: {result}')
 
             now = self.node.get_clock().now().nanoseconds
             name = f'photo-{now}.png'
-            cv2.imwrite(name, result.image)
+            cv2.imwrite(name, img)
             self.log(f'Save raw photo: {name}.')
 
-            annotated = Detector.draw_detections(result.image, result)
+            annotated = detector.draw_detections(img, result)
             annotated_name = f'photo-{now}-annotated.png'
             cv2.imwrite(annotated_name, annotated)
             self.log(f'Save annotated photo: {annotated_name}.')
 
             # Search aruco number
             find_arucos = []
-            for a in list(d for d in result if d.class_name == '6'): # aruco detections
-                x1, y1, x2, y2 = a.bbox
+            for d in list(d for d in result if d.class_name == '6'): # aruco detections
+                x1, y1, x2, y2 = d.bbox
 
-                h, w = result.image.shape[:2]
+                h, w = img.shape[:2]
 
-                x1 = min(w, max(0, int(x1 - a.width / 2)))
-                y1 = min(h, max(0, int(y1 - a.height / 2)))
-                x2 = min(w, max(0, int(x2 + a.width / 2)))
-                y2 = min(h, max(0, int(y2 + a.height / 2)))
+                x1 = min(w, max(0, int(x1 - w / 2)))
+                y1 = min(h, max(0, int(y1 - h / 2)))
+                x2 = min(w, max(0, int(x2 + w / 2)))
+                y2 = min(h, max(0, int(y2 + h / 2)))
 
-                crop = a.image[y1:y2, x1:x2]
+                crop = img[y1:y2, x1:x2]
 
                 n = self.get_number_of_aruco(crop)
 
@@ -77,11 +86,11 @@ class Search(State):
                     continue
 
                 if n % 3 == 0:
-                    find_arucos.append((a, 3))
+                    find_arucos.append((d, 3))
                 elif n % 4 == 0:
-                    find_arucos.append((a, 4))
+                    find_arucos.append((d, 4))
                 elif n % 5 == 0:
-                    find_arucos.append((a, 5))
+                    find_arucos.append((d, 5))
 
             if not find_arucos:
                 self.log(
@@ -96,9 +105,9 @@ class Search(State):
 
             # Search aruco shape
             aruco_shapes = []
-            for s in list(d for d in result if d.class_name == ('0', '1', '2')):  # all shapes
+            for s in list(d for d in result if d.class_name in ('0', '1', '2')):  # all shapes
                 if (abs(aruco.center[0] - s.center[0]) <= s.width / 2) and (abs(aruco.center[1] - s.center[1]) <= s.height / 2):
-                    aruco_shapes.append((s, n))
+                    aruco_shapes.append(s)
 
             if not aruco_shapes:
                 self.log(
@@ -122,7 +131,7 @@ class Search(State):
             # Search Landing base
             landing_bases = []
             for s in list(d for d in result if d.class_name == target_base['shape']):  # all target shapes
-                for n in list(d for d in result if d.class_name == target_base['number']):  # all target numbers
+                for n in list(d for d in result if d.class_name == str(target_base['number'])):  # all target numbers
                     if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
                         landing_bases.append((s, n))
 
@@ -139,6 +148,7 @@ class Search(State):
                 key=lambda l: l[0].confidence * l[1].confidence
             )
 
+            self.log(f'Landing base found.')
             count += 1
 
             if count >= SEARCH_DETECTIONS_LOST_TOLERANCE:
@@ -152,7 +162,7 @@ class Search(State):
         return FAIL
 
 
-    def get_number_of_aruco(img):
+    def get_number_of_aruco(self, img):
         if img is None:
             return None
 
@@ -174,9 +184,6 @@ class Search(State):
             corners, ids, _ = detector.detectMarkers(gray)
 
             if ids is not None:
-                return {
-                    "dict": dict_id,
-                    "ids": ids.flatten()
-                }
+                return ids.flatten()
 
         return None

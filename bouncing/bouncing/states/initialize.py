@@ -82,14 +82,15 @@ class Initialize(State):
                 node=self.node,
                 image_source=CAMERA_IMAGE_SOURCE,
                 config=CAMERA_CONFIG,
-                image_processing_callback=detector.detect,
+                image_processing_callback=lambda img: (img, detector.detect(img)),
             )
 
             self.log('Open camera...')
             image_handler.open()
 
             self.log('Take testing photo...')
-            image_handler.take_photo()
+            _, result = image_handler.take_photo()
+            self.log(f'Result: {result}')
 
             blackboard['image_handler'] = image_handler
             self.log('Successfull start ImageHandler...')
