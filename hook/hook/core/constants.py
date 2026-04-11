@@ -3,6 +3,7 @@ import os
 
 # --- Altitude (meters) ---
 SEARCH_ALTITUDE = 6.0
+WORK_ALTITUDE = 3.5
 RELEASE_ALTITUDE = 2.0
 RTL_ALTITUDE = 5.0
 
@@ -12,9 +13,6 @@ IMAGE_WIDTH = 1920
 IMAGE_HEIGHT = 1080
 IMAGE_CENTER_X = IMAGE_WIDTH // 2
 IMAGE_CENTER_Y = IMAGE_HEIGHT // 2
-
-# Approximate horizontal FOV in degrees (102° diagonal, 16:9)
-HORIZONTAL_FOV_DEG = 87.0
 
 # --- Model paths ---
 SPHERE_MODEL_PATH = os.path.join(
@@ -28,38 +26,46 @@ ROPE_MODEL_PATH = os.path.join(
 SPHERE_CONF_THRESHOLD = 0.7
 ROPE_CONF_THRESHOLD = 0.5
 
-# --- Sphere detection ---
+# --- Sphere detection (DETECT_SPHERE) ---
 SPHERE_DETECTION_CONFIRMATIONS = 6
 SPHERE_DETECT_TIMEOUT = 30  # seconds
-YAW_SCAN_VELOCITY = 0.3  # rad/s during 360° scan
+YAW_SCAN_VELOCITY = 0.3  # rad/s during 360 scan
 
-# --- Align and approach ---
-YAW_ALIGN_TOLERANCE_PX = 80  # horizontal pixel tolerance for yaw alignment
-YAW_ALIGN_KP = 0.002  # proportional gain for yaw correction (rad/s per pixel)
+# --- Approach sphere (APPROACH_SPHERE) ---
+YAW_ALIGN_TOLERANCE_PX = 80
+YAW_ALIGN_KP = 0.002  # rad/s per pixel
 YAW_ALIGN_MAX_VELOCITY = 0.5  # rad/s
 YAW_ALIGN_CONFIRMATIONS = 5
 
-APPROACH_KP_Y = 0.0008  # lateral correction during approach
-APPROACH_FORWARD_VELOCITY = 0.3  # m/s forward
-APPROACH_MAX_LATERAL_VELOCITY = 0.3
-APPROACH_SPHERE_AREA_THRESHOLD = 15000  # px², stop approaching when sphere bbox area exceeds this
-APPROACH_TIMEOUT = 30  # seconds
+APPROACH_KP_X = 0.001  # image Y error -> body X velocity
+APPROACH_KP_Y = 0.001  # image X error -> body Y velocity
+APPROACH_MAX_VELOCITY_XY = 0.3
+APPROACH_DESCEND_VELOCITY = 0.2  # m/s descent while centering on sphere
+APPROACH_CENTER_TOLERANCE_PX = 60
+APPROACH_TIMEOUT = 40  # seconds
+APPROACH_MAX_LOST_FRAMES = 50
 
-# --- Rope centering (pre-descent) ---
-CENTER_TOLERANCE_PX = 50
-CENTERING_CONFIRMATIONS = 8
-CENTER_KP_X = 0.001  # image Y error -> body X velocity
-CENTER_KP_Y = 0.001  # image X error -> body Y velocity
-CENTER_MAX_VELOCITY_XY = 0.3
-CENTER_TIMEOUT = 40  # seconds
-CENTER_MAX_LOST_FRAMES = 80
+# --- Hose alignment (ALIGN_TO_HOSE) ---
+HOSE_MIN_CONTOUR_AREA = 200  # px², minimum mask area to trust
+HOSE_ANGLE_TOLERANCE_DEG = 5.0  # degrees from perpendicular (angle -> 0)
+HOSE_ANGLE_KP = 0.01  # rad/s per degree of angle error
+HOSE_ANGLE_MAX_VELOCITY = 0.4  # rad/s
+HOSE_CENTER_TOLERANCE_PX = 40  # perpendicular centering tolerance
+HOSE_CENTER_KP = 0.001  # m/s per pixel of center_x error
+HOSE_CENTER_MAX_VELOCITY = 0.25  # m/s
+HOSE_ALIGN_CONFIRMATIONS = 6
+HOSE_ALIGN_TIMEOUT = 30  # seconds
+HOSE_ALIGN_MAX_LOST_FRAMES = 60
+HOSE_OFFSET_DISTANCE = 0.5  # meters to shift along hose away from sphere
 
-# --- Descent ---
+# --- Descent with alignment (DESCEND_AND_ALIGN) ---
 DESCEND_VELOCITY = 0.15  # m/s downward
-DESCEND_KP_X = 0.0009
-DESCEND_KP_Y = 0.0009
+DESCEND_CENTER_KP = 0.0009  # m/s per pixel (center_x -> vy)
+DESCEND_ANGLE_KP = 0.008  # rad/s per degree (angle -> vyaw)
 DESCEND_MAX_VELOCITY_XY = 0.2
-DESCEND_CENTER_TOLERANCE_PX = 60
+DESCEND_MAX_YAW_VELOCITY = 0.3
+DESCEND_CENTER_TOLERANCE_PX = 50
+DESCEND_ANGLE_TOLERANCE_DEG = 8.0
 DESCEND_TIMEOUT = 45  # seconds
 DESCEND_MAX_LOST_FRAMES = 60
 

@@ -2,9 +2,9 @@ from yasmin import StateMachine
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from hook.states.detect_sphere import DetectSphere
-from hook.states.align_and_approach import AlignAndApproach
-from hook.states.center_on_rope import CenterOnRope
-from hook.states.descend import DescendAndCenter
+from hook.states.approach_sphere import ApproachSphere
+from hook.states.align_to_hose import AlignToHose
+from hook.states.descend import DescendAndAlign
 from hook.states.release_hook import ReleaseHook
 
 
@@ -15,24 +15,24 @@ class HangWireSM(StateMachine):
         self.add_state(
             "DETECT_SPHERE",
             DetectSphere(),
-            transitions={SUCCEED: "ALIGN_AND_APPROACH", ABORT: ABORT},
+            transitions={SUCCEED: "APPROACH_SPHERE", ABORT: ABORT},
         )
 
         self.add_state(
-            "ALIGN_AND_APPROACH",
-            AlignAndApproach(),
-            transitions={SUCCEED: "CENTER_ON_ROPE", ABORT: "DETECT_SPHERE"},
+            "APPROACH_SPHERE",
+            ApproachSphere(),
+            transitions={SUCCEED: "ALIGN_TO_HOSE", ABORT: "DETECT_SPHERE"},
         )
 
         self.add_state(
-            "CENTER_ON_ROPE",
-            CenterOnRope(),
-            transitions={SUCCEED: "DESCEND_AND_CENTER", ABORT: "ALIGN_AND_APPROACH"},
+            "ALIGN_TO_HOSE",
+            AlignToHose(),
+            transitions={SUCCEED: "DESCEND_AND_ALIGN", ABORT: "APPROACH_SPHERE"},
         )
 
         self.add_state(
-            "DESCEND_AND_CENTER",
-            DescendAndCenter(),
+            "DESCEND_AND_ALIGN",
+            DescendAndAlign(),
             transitions={SUCCEED: "RELEASE_HOOK", ABORT: ABORT},
         )
 

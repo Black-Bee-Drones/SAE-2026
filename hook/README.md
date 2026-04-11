@@ -13,12 +13,11 @@ Built with [Nectar SDK](https://github.com/Black-Bee-Drones/nectar-sdk) and [Yas
 
 ## Strategy
 
-1. Take off to 6m -- the camera FOV covers the full arena from that altitude
-2. Detect the orange sphere (25cm, YOLO detection model) to identify the correct rope
-3. Align yaw toward the sphere, then approach using sphere detection for coarse centering
-4. Fine center on the rope using segmentation model (YOLO-seg) + PID
-5. Descend while maintaining segmentation-based centering until release altitude (2.0m)
-6. Release hook via servo, RTL, land
+Two-phase approach based on what each sensor can see at each altitude:
+
+**Phase A -- Sphere-guided (6m to 3.5m):** The hose is ~6px wide at 6m, almost invisible to model. The sphere (25cm) is ~112px, easily detectable. Use sphere detection to find the correct hose, center above it, and descend to working altitude.
+
+**Phase B -- Hose-guided (3.5m to 2.0m):** At 3.5m the hose is ~14-20px, viable for segmentation. Extract the hose angle from the segmentation mask via `cv2.minAreaRect` (same technique as the SDK's `RotatedRect` line estimation). Align yaw perpendicular to the hose, center above it, descend while maintaining alignment.
 
 ## State Machine
 
@@ -33,17 +32,17 @@ stateDiagram-v2
 
     state HANG_WIRE {
         [*] --> DETECT_SPHERE
-        DETECT_SPHERE --> ALIGN_AND_APPROACH: succeed
+        DETECT_SPHERE --> APPROACH_SPHERE: succeed
         DETECT_SPHERE --> [*]: abort
 
-        ALIGN_AND_APPROACH --> CENTER_ON_ROPE: succeed
-        ALIGN_AND_APPROACH --> DETECT_SPHERE: abort
+        APPROACH_SPHERE --> ALIGN_TO_HOSE: succeed
+        APPROACH_SPHERE --> DETECT_SPHERE: abort
 
-        CENTER_ON_ROPE --> DESCEND_AND_CENTER: succeed
-        CENTER_ON_ROPE --> ALIGN_AND_APPROACH: abort
+        ALIGN_TO_HOSE --> DESCEND_AND_ALIGN: succeed
+        ALIGN_TO_HOSE --> APPROACH_SPHERE: abort
 
-        DESCEND_AND_CENTER --> RELEASE_HOOK: succeed
-        DESCEND_AND_CENTER --> [*]: abort
+        DESCEND_AND_ALIGN --> RELEASE_HOOK: succeed
+        DESCEND_AND_ALIGN --> [*]: abort
 
         RELEASE_HOOK --> [*]: succeed/abort
     }
@@ -60,9 +59,9 @@ stateDiagram-v2
 | INITIALIZE | `core/states.py` | Create drone (DroneFactory/MAVROS), camera (ImageHandler/USB), load detection + segmentation models |
 | TAKEOFF | `core/states.py` | Arm, set home, take off to search altitude (6m) |
 | DETECT_SPHERE | `states/detect_sphere.py` | Detect orange sphere from altitude with yaw scan if needed |
-| ALIGN_AND_APPROACH | `states/align_and_approach.py` | Yaw alignment toward sphere, then forward approach with lateral correction |
-| CENTER_ON_ROPE | `states/center_on_rope.py` | Segmentation-based PID centering on rope mask centroid |
-| DESCEND_AND_CENTER | `states/descend.py` | Descend at constant rate while maintaining centering via segmentation + PID |
+| APPROACH_SPHERE | `states/approach_sphere.py` | Yaw toward sphere, then PID center XY on sphere while descending to 3.5m |
+| ALIGN_TO_HOSE | `states/align_to_hose.py` | Segmentation mask + minAreaRect to get hose angle; PID yaw to perpendicular, PID center above hose |
+| DESCEND_AND_ALIGN | `states/descend.py` | Descend with dual PID: center_x -> vy (stay above hose) + angle -> vyaw (stay perpendicular) |
 | RELEASE_HOOK | `states/release_hook.py` | Servo actuation to release hook |
 | RETURN_TO_LAUNCH | `core/states.py` | Navigate back to takeoff position |
 | LAND | `core/states.py` | Land and cleanup |
@@ -78,12 +77,12 @@ hook/
       states.py             # Initialize, Takeoff, ReturnToLaunch, Land
     states/
       sm.py                 # HangWireSM sub-state machine
-      detect_sphere.py
-      align_and_approach.py
-      center_on_rope.py
-      descend.py
-      release_hook.py
-  share/models/             # Place model weights here (sphere.pt, rope_seg.pt)
+      detect_sphere.py      # Phase A: sphere detection from altitude
+      approach_sphere.py    # Phase A: center + descend using sphere
+      align_to_hose.py      # Phase B: yaw alignment + centering on hose via segmentation
+      descend.py            # Phase B: descent with hose alignment
+      release_hook.py       # Servo release
+  share/models/             # Place model weights here
   package.xml
   setup.py
 ```
@@ -92,36 +91,31 @@ hook/
 
 Place trained model weights in `share/models/`:
 - `sphere.pt` -- YOLO detection model for the orange sphere
-- `rope_seg.pt` -- YOLO-seg (or similar) segmentation model for the rope/hose
+- `rope_seg.pt` -- YOLO-seg (or similar) instance segmentation model for the hose
 
 Models are accessed at runtime via `ament_index_python.packages.get_package_share_directory("hook")`.
 
 ## Parameters
 
-Key parameters are in `hook/core/constants.py`. Main ones:
+Key parameters in `hook/core/constants.py`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `SEARCH_ALTITUDE` | 6.0 m | Takeoff/search height |
-| `RELEASE_ALTITUDE` | 2.0 m | Height to release hook (rope is at 1.7m) |
+| `WORK_ALTITUDE` | 3.5 m | Transition from sphere to hose guidance |
+| `RELEASE_ALTITUDE` | 2.0 m | Height to release hook (hose is at 1.7m) |
 | `RTL_ALTITUDE` | 5.0 m | Safe return altitude |
-| `SPHERE_CONF_THRESHOLD` | 0.7 | Sphere detection confidence |
-| `ROPE_CONF_THRESHOLD` | 0.5 | Rope segmentation confidence |
-| `CENTER_TOLERANCE_PX` | 50 | Pixel tolerance for centering |
+| `HOSE_ANGLE_TOLERANCE_DEG` | 5.0 | Degrees from perpendicular to consider aligned |
+| `HOSE_CENTER_TOLERANCE_PX` | 40 | Pixel tolerance for centering above hose |
 | `DESCEND_VELOCITY` | 0.15 m/s | Descent rate |
 | `SERVO_CHANNEL` | 3 | AUX output for hook servo |
 
 ## Usage
 
 ```bash
-# Build
 cd ~/ros2_ws
 colcon build --packages-select hook
-
-# Source
 source install/setup.bash
-
-# Run mission
 ros2 run hook mangalarga
 ```
 
@@ -134,4 +128,5 @@ ros2 run hook mangalarga
 ## References
 
 - [SAE Eletroquad 2026 Rules](../Regulamento_EletroQuad_2026_portugues.pdf)
+- [Mission Notes](../hook.md)
 - [Nectar SDK Documentation](https://github.com/Black-Bee-Drones/nectar-sdk/blob/main/README.md)
