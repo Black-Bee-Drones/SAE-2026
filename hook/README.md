@@ -15,7 +15,7 @@ Built with [Nectar SDK](https://github.com/Black-Bee-Drones/nectar-sdk) and [Yas
 
 Two-phase approach based on what each sensor can see at each altitude:
 
-**Phase A -- Sphere-guided (6m to 3.5m):** The hose is ~6px wide at 6m, almost invisible to model. The sphere (25cm) is ~112px, easily detectable. Use sphere detection to find the correct hose, center above it, and descend to working altitude.
+**Phase A -- Sphere-guided (6m to 3.5m):** The hose is ~6px wide at 6m, invisible to any model. The sphere (25cm) is ~112px, easily detectable. Use sphere detection to navigate near the correct hose and descend to working altitude. The drone intentionally stops slightly offset from the sphere (not directly above) to prevent the TFLuna lidar from reading the sphere surface instead of the ground. The lidar remains the primary altitude source throughout the mission; the protection is spatial (avoid overflying the sphere), not by switching sensors.
 
 **Phase B -- Hose-guided (3.5m to 2.0m):** At 3.5m the hose is ~14-20px, viable for segmentation. Extract the hose angle from the segmentation mask via `cv2.minAreaRect` (same technique as the SDK's `RotatedRect` line estimation). Align yaw perpendicular to the hose, center above it, descend while maintaining alignment.
 
@@ -59,7 +59,7 @@ stateDiagram-v2
 | INITIALIZE | `core/states.py` | Create drone (DroneFactory/MAVROS), camera (ImageHandler/USB), load detection + segmentation models |
 | TAKEOFF | `core/states.py` | Arm, set home, take off to search altitude (6m) |
 | DETECT_SPHERE | `states/detect_sphere.py` | Detect orange sphere from altitude with yaw scan if needed |
-| APPROACH_SPHERE | `states/approach_sphere.py` | Yaw toward sphere, then PID center XY on sphere while descending to 3.5m |
+| APPROACH_SPHERE | `states/approach_sphere.py` | Step 1: PID center near sphere at search alt (offset to avoid lidar). Step 2: descend to 3.5m with lateral tracking |
 | ALIGN_TO_HOSE | `states/align_to_hose.py` | Segmentation mask + minAreaRect to get hose angle; PID yaw to perpendicular, PID center above hose |
 | DESCEND_AND_ALIGN | `states/descend.py` | Descend with dual PID: center_x -> vy (stay above hose) + angle -> vyaw (stay perpendicular) |
 | RELEASE_HOOK | `states/release_hook.py` | Servo actuation to release hook |
@@ -107,7 +107,8 @@ Key parameters in `hook/core/constants.py`:
 | `RTL_ALTITUDE` | 5.0 m | Safe return altitude |
 | `HOSE_ANGLE_TOLERANCE_DEG` | 5.0 | Degrees from perpendicular to consider aligned |
 | `HOSE_CENTER_TOLERANCE_PX` | 40 | Pixel tolerance for centering above hose |
-| `DESCEND_VELOCITY` | 0.15 m/s | Descent rate |
+| `SPHERE_OFFSET_PX` | 120 | Pixel offset to avoid flying directly over sphere (lidar protection) |
+| `DESCEND_VELOCITY` | 0.1 m/s | Descent rate |
 | `SERVO_CHANNEL` | 3 | AUX output for hook servo |
 
 ## Usage

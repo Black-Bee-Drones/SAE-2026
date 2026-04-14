@@ -77,7 +77,7 @@ class DescendAndAlign(State):
         while time.time() - start_time < DESCEND_TIMEOUT:
             rclpy.spin_once(YasminNode.get_instance(), timeout_sec=0.05)
 
-            current_alt = drone.get_altitude(AltitudeSource.REL_ALT)
+            current_alt = drone.get_altitude(AltitudeSource.AUTO)
             if current_alt is None:
                 time.sleep(0.05)
                 continue

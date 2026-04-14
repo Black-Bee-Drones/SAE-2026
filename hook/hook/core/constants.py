@@ -32,16 +32,13 @@ SPHERE_DETECT_TIMEOUT = 30  # seconds
 YAW_SCAN_VELOCITY = 0.3  # rad/s during 360 scan
 
 # --- Approach sphere (APPROACH_SPHERE) ---
-YAW_ALIGN_TOLERANCE_PX = 80
-YAW_ALIGN_KP = 0.002  # rad/s per pixel
-YAW_ALIGN_MAX_VELOCITY = 0.5  # rad/s
-YAW_ALIGN_CONFIRMATIONS = 5
-
 APPROACH_KP_X = 0.001  # image Y error -> body X velocity
 APPROACH_KP_Y = 0.001  # image X error -> body Y velocity
 APPROACH_MAX_VELOCITY_XY = 0.3
-APPROACH_DESCEND_VELOCITY = 0.2  # m/s descent while centering on sphere
-APPROACH_CENTER_TOLERANCE_PX = 60
+APPROACH_DESCEND_VELOCITY = 0.2  # m/s descent while maintaining lateral tracking
+APPROACH_CENTER_TOLERANCE_PX = 60  # px, close enough to sphere
+SPHERE_OFFSET_PX = 120  # px, stop this far from image center to avoid lidar over sphere
+APPROACH_CENTER_CONFIRMATIONS = 6
 APPROACH_TIMEOUT = 40  # seconds
 APPROACH_MAX_LOST_FRAMES = 50
 
@@ -59,7 +56,7 @@ HOSE_ALIGN_MAX_LOST_FRAMES = 60
 HOSE_OFFSET_DISTANCE = 0.5  # meters to shift along hose away from sphere
 
 # --- Descent with alignment (DESCEND_AND_ALIGN) ---
-DESCEND_VELOCITY = 0.15  # m/s downward
+DESCEND_VELOCITY = 0.1  # m/s downward
 DESCEND_CENTER_KP = 0.0009  # m/s per pixel (center_x -> vy)
 DESCEND_ANGLE_KP = 0.008  # rad/s per degree (angle -> vyaw)
 DESCEND_MAX_VELOCITY_XY = 0.2
