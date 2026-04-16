@@ -1,6 +1,7 @@
 import os
 
 from ament_index_python.packages import get_package_share_directory
+from launch_ros.actions import Node
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -31,4 +32,16 @@ def generate_launch_description():
         }.items(),
     )
 
-    return LaunchDescription([fcu_url_arg, sitl_gazebo])
+    down_camera_republish = Node(
+        package="image_transport",
+        executable="republish",
+        name="down_camera_republish",
+        arguments=["raw", "compressed"],
+        remappings=[
+            ("in", "/down_camera"),
+            ("out/compressed", "/down_camera/compressed"),
+        ],
+        output="log",
+    )
+
+    return LaunchDescription([fcu_url_arg, sitl_gazebo, down_camera_republish])
