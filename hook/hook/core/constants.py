@@ -74,3 +74,19 @@ RELEASE_PWM = 2000.0
 # --- Saving detections ---
 SAVE_DETECTIONS = True
 DETECTION_SAVE_PATH = os.path.expanduser("~/sae2026")
+
+# --- Simulation mode ---
+# Set SIM_MODE = True to use Gazebo SITL instead of real hardware.
+# When True, overrides IMAGE_SOURCE and drone config.
+SIM_MODE = os.environ.get("HOOK_SIM", "0") == "1"
+
+SIM_IMAGE_SOURCE = "/down_camera"
+SIM_IMAGE_WIDTH = 960
+SIM_IMAGE_HEIGHT = 540
+
+if SIM_MODE:
+    IMAGE_SOURCE = SIM_IMAGE_SOURCE
+    IMAGE_WIDTH = SIM_IMAGE_WIDTH
+    IMAGE_HEIGHT = SIM_IMAGE_HEIGHT
+    IMAGE_CENTER_X = IMAGE_WIDTH // 2
+    IMAGE_CENTER_Y = IMAGE_HEIGHT // 2

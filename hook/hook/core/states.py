@@ -12,6 +12,7 @@ from nectar.control import (
     PoseSource,
     MoveReference,
     RTLMethod,
+    SITL_GAZEBO_CONFIG,
 )
 from nectar.vision import ImageHandler, OpenCVConfig
 from nectar.ai.detection import Detector
@@ -27,6 +28,7 @@ from hook.core.constants import (
     ROPE_MODEL_PATH,
     SPHERE_CONF_THRESHOLD,
     ROPE_CONF_THRESHOLD,
+    SIM_MODE,
 )
 
 
@@ -39,19 +41,17 @@ class Initialize(State):
             node = YasminNode.get_instance()
             yasmin.YASMIN_LOG_INFO("Initializing drone...")
 
-            drone = DroneFactory.create(
-                "mavros",
-                MavrosConfig(pose_source=PoseSource.GPS),
-                node,
-            )
+            config = SITL_GAZEBO_CONFIG if SIM_MODE else MavrosConfig(pose_source=PoseSource.GPS)
+            drone = DroneFactory.create("mavros", config, node)
             blackboard["drone"] = drone
             drone.delay(1)
 
             yasmin.YASMIN_LOG_INFO("Initializing camera...")
+            cam_config = None if SIM_MODE else OpenCVConfig(width=IMAGE_WIDTH, height=IMAGE_HEIGHT)
             camera = ImageHandler(
                 node=node,
                 image_source=IMAGE_SOURCE,
-                config=OpenCVConfig(width=IMAGE_WIDTH, height=IMAGE_HEIGHT),
+                config=cam_config,
             )
             camera.open()
             drone.delay(1)

@@ -11,6 +11,8 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/models", glob("share/models/*")),
+        ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
+        ("share/" + package_name + "/simulation/worlds", glob("simulation/worlds/*.sdf")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

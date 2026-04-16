@@ -120,6 +120,23 @@ source install/setup.bash
 ros2 run hook mangalarga
 ```
 
+## Simulation
+
+Gazebo Harmonic world (`sae_hook_arena.sdf`) replicating the M2 arena: two red hoses at 1.7m, orange sphere, takeoff base, support posts. Down camera matches Arducam IMX662 FOV. Uses nectar SDK's SITL infrastructure.
+
+```bash
+# Terminal 1: Start ArduPilot SITL
+make sim-start-gazebo
+
+# Terminal 2: Launch Gazebo with hook arena + MAVROS
+ros2 launch hook sae_hook.launch.py
+
+# Terminal 3: Run mission in sim mode
+HOOK_SIM=1 ros2 run hook mangalarga
+```
+
+`HOOK_SIM=1` switches camera source to `/down_camera` (Gazebo topic) and drone config to `SITL_GAZEBO_CONFIG`.
+
 ## Dependencies
 
 - [Nectar SDK](https://github.com/Black-Bee-Drones/nectar-sdk) (control, vision, AI)
