@@ -5,7 +5,6 @@ import rclpy
 import yasmin
 from yasmin_ros import set_ros_loggers
 from yasmin import StateMachine
-from yasmin_viewer import YasminViewerPub
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, TIMEOUT, ABORT
 
 from bouncing.states import (
@@ -57,10 +56,7 @@ def main():
 
     bouncing_sm = Bouncing()
 
-    YasminViewerPub("mangalarga", bouncing_sm)
-
     try:
-        yasmin.YASMIN_LOG_ERROR(bouncing_sm.validate())
         final_outcome = bouncing_sm()
         yasmin.YASMIN_LOG_INFO(final_outcome)
     except KeyboardInterrupt:
