@@ -22,61 +22,46 @@ class Initialize(State):
         self.node = YasminNode.get_instance()
 
 
-    def log(self, msg, style='info'):
-        class_name = f'{self.__class__.__name__}({", ".join([cls.__name__ for cls in self.__class__.__bases__])})'
-
-        if style == 'info':
-            yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
-        elif style == 'error':
-            yasmin.YASMIN_LOG_ERROR(f'{class_name}: {msg}')
-
-
     def execute(self, blackboard: Blackboard):
-        self.log('Start.')
+        yasmin.YASMIN_LOG_INFO('Start.')
 
 
-        self.log('Initializing \"target_base\"...')
+        yasmin.YASMIN_LOG_INFO('Initializing \"target_base\"...')
         blackboard['target_base'] = {} # {shape, number}
 
 
-        self.log('Initializing MavrosDrone...')
+        yasmin.YASMIN_LOG_INFO('Initializing MavrosDrone...')
         try:
             config = MavrosConfig()
             blackboard['drone'] = MavrosDrone(
                 config=config,
                 node=self.node,
             )
-            self.log('Successfull start MavrosDrone...')
+            yasmin.YASMIN_LOG_INFO('Successfull start MavrosDrone...')
         except Exception as e:
-            self.log(
-                f'Mavdrone failed: {e}.',
-                style='error',
-            )
+            yasmin.YASMIN_LOG_ERROR(f'Mavdrone failed: {e}.')
             return ABORT
 
 
-        self.log('Initializing Detector...')
+        yasmin.YASMIN_LOG_INFO('Initializing Detector...')
         try:
             detector = Detector(
                 model_source = MODEL_SOURCE,
                 confidence_threshold = MODEL_CONFIDENCE_THRESHOLD,
             )
 
-            self.log('Loading Detector...')
+            yasmin.YASMIN_LOG_INFO('Loading Detector...')
             detector.load()
 
             blackboard['detector'] = detector
-            self.log('Successfull start Detector...')
+            yasmin.YASMIN_LOG_INFO('Successfull start Detector...')
 
         except Exception as e:
-            self.log(
-                f'Detector failed: {e}.',
-                style='error',
-            )
+            yasmin.YASMIN_LOG_ERROR(f'Detector failed: {e}.')
             return ABORT
 
 
-        self.log('Initializing ImageHandler...')
+        yasmin.YASMIN_LOG_INFO('Initializing ImageHandler...')
         try:
             image_handler = ImageHandler(
                 node=self.node,
@@ -85,23 +70,20 @@ class Initialize(State):
                 image_processing_callback=lambda img: (img, detector.detect(img)),
             )
 
-            self.log('Open camera...')
+            yasmin.YASMIN_LOG_INFO('Open camera...')
             image_handler.open()
 
-            self.log('Take testing photo...')
+            yasmin.YASMIN_LOG_INFO('Take testing photo...')
             _, result = image_handler.take_photo()
-            self.log(f'Result: {result}')
+            yasmin.YASMIN_LOG_INFO(f'Result: {result}')
 
             blackboard['image_handler'] = image_handler
-            self.log('Successfull start ImageHandler...')
+            yasmin.YASMIN_LOG_INFO('Successfull start ImageHandler...')
 
         except Exception as e:
-            self.log(
-                f'ImageHandler failed: {e}.',
-                style='error',
-            )
+            yasmin.YASMIN_LOG_ERROR(f'ImageHandler failed: {e}.')
             return ABORT
 
 
-        self.log('Completed successfully.')
+        yasmin.YASMIN_LOG_INFO('Completed successfully.')
         return SUCCEED

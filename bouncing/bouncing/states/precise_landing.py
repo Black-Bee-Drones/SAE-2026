@@ -42,74 +42,53 @@ class PreciseLanding(State):
         )
 
 
-    def log(self, msg, style='info'):
-        class_name = f'{self.__class__.__name__}({", ".join([cls.__name__ for cls in self.__class__.__bases__])})'
-
-        if style == 'info':
-            yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
-        elif style == 'error':
-            yasmin.YASMIN_LOG_ERROR(f'{class_name}: {msg}')
-
-
     def execute(self, blackboard: Blackboard):
         if ('drone' not in blackboard) or not blackboard['drone']:
-            self.log(
-                'MavrosDrone not available.',
-                style='error'
-            )
+            yasmin.YASMIN_LOG_ERROR('MavrosDrone not available.')
             return ABORT
         drone: MavrosDrone = blackboard['drone']
 
         if ('image_handler' not in blackboard) or not blackboard['image_handler']:
-            self.log(
-                'ImageHandler not available.',
-                style='error'
-            )
+            yasmin.YASMIN_LOG_ERROR('ImageHandler not available.')
             return ABORT
         image_handler: ImageHandler = blackboard['image_handler']
 
         if ('target_base' not in blackboard) or not blackboard['target_base']:
-            self.log(
-                '\"target_base\" not available.',
-                style='error'
-            )
+            yasmin.YASMIN_LOG_ERROR('\"target_base\" not available.')
             return ABORT
         target_base: dict = blackboard['target_base']
 
         if ('detector' not in blackboard) or not blackboard['detector']:
-            self.log(
-                f'Detector not available.',
-                style='error'
-            )
+            yasmin.YASMIN_LOG_ERROR(f'Detector not available.')
             return ABORT
         detector: Detector = blackboard['detector']
 
-        self.log('Start.')
+        yasmin.YASMIN_LOG_INFO('Start.')
 
-        self.log(f'Start PID in landing base: {target_base}.')
+        yasmin.YASMIN_LOG_INFO(f'Start PID in landing base: {target_base}.')
         lost_detection_count = 0
         start = self.node.get_clock().now()
         duration = Duration(seconds=PRECISE_LANDING_TIMEOUT)
         while self.node.get_clock().now() - start < duration:
 
             if drone.rel_alt <= PRECISE_LANDING_LAND_ALTITUDE:
-                self.log(f'Completed successfully.')
+                yasmin.YASMIN_LOG_INFO(f'Completed successfully.')
                 drone.move_velocity(0.0, 0.0, 0.0, 0.0)
                 drone.delay(1.0)
                 return SUCCEED
 
-            self.log(f'Take and process photo.')
+            yasmin.YASMIN_LOG_INFO(f'Take and process photo.')
             img, result = image_handler.take_photo()
 
             now = self.node.get_clock().now().nanoseconds
             name = f'photo-{now}.png'
             cv2.imwrite(name, img)
-            self.log(f'Save raw photo: {name}.')
+            yasmin.YASMIN_LOG_INFO(f'Save raw photo: {name}.')
 
             annotated = detector.draw_detections(img, result)
             annotated_name = f'photo-{now}-annotated.png'
             cv2.imwrite(annotated_name, annotated)
-            self.log(f'Save annotated photo: {annotated_name}.')
+            yasmin.YASMIN_LOG_INFO(f'Save annotated photo: {annotated_name}.')
 
             # Search number inside shape
             landing_bases = []
@@ -126,22 +105,16 @@ class PreciseLanding(State):
 
             # Search number
             else:
-                self.log('Shape not found. Try get number.')
+                yasmin.YASMIN_LOG_INFO('Shape not found. Try get number.')
                 numbers = list(d for d in result if d.class_name == str(target_base['number']))
 
                 if not numbers:
                     lost_detection_count += 1
                     drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                    self.log(
-                        f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).',
-                        style='error'
-                    )
+                    yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
 
                     if lost_detection_count >= PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE:
-                        self.log(
-                            'It lost detection many times.',
-                            style='error'
-                        )
+                        yasmin.YASMIN_LOG_ERROR('It lost detection many times.')
                         return FAIL
                     continue
 
@@ -166,7 +139,7 @@ class PreciseLanding(State):
             output_x = self.pid_x.update(error_x)
             output_y = self.pid_y.update(error_y)
 
-            self.log(f'Detection: \n\terror_x={error_x}, \n\terror_y={error_y}, \n\toutput_x={output_x}, \n\toutput_y={output_y}')
+            yasmin.YASMIN_LOG_INFO(f'Detection: \n\terror_x={error_x}, \n\terror_y={error_y}, \n\toutput_x={output_x}, \n\toutput_y={output_y}')
             drone.move_velocity(
                 vx = output_x,
                 vy = output_y,
@@ -174,5 +147,5 @@ class PreciseLanding(State):
                 vyaw = 0.0,
             )
 
-        self.log('Timeout.')
+        yasmin.YASMIN_LOG_INFO('Timeout.')
         return TIMEOUT

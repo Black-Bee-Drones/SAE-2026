@@ -20,51 +20,36 @@ class Search(State):
         self.node = YasminNode.get_instance()
 
 
-    def log(self, msg, style='info'):
-        class_name = f'{self.__class__.__name__}({", ".join([cls.__name__ for cls in self.__class__.__bases__])})'
-
-        if style == 'info':
-            yasmin.YASMIN_LOG_INFO(f'{class_name}: {msg}')
-        elif style == 'error':
-            yasmin.YASMIN_LOG_ERROR(f'{class_name}: {msg}')
-
-
     def execute(self, blackboard: Blackboard):
         if ('image_handler' not in blackboard) or not blackboard['image_handler']:
-            self.log(
-                f'ImageHandler not available.',
-                style='error'
-            )
+            yasmin.YASMIN_LOG_ERROR(f'ImageHandler not available.')
             return ABORT
         image_handler: ImageHandler = blackboard['image_handler']
 
         if ('detector' not in blackboard) or not blackboard['detector']:
-            self.log(
-                f'Detector not available.',
-                style='error'
-            )
+            yasmin.YASMIN_LOG_ERROR(f'Detector not available.')
             return ABORT
         detector: Detector = blackboard['detector']
 
-        self.log('Start.')
+        yasmin.YASMIN_LOG_INFO('Start.')
 
         target_base = {} # {shape, number}
 
         count = 0
         for i in range(SEARCH_NUMBER_DETECTIONS):
-            self.log(f'Take and process photo {i+1}/{SEARCH_NUMBER_DETECTIONS}.')
+            yasmin.YASMIN_LOG_INFO(f'Take and process photo {i+1}/{SEARCH_NUMBER_DETECTIONS}.')
             img, result = image_handler.take_photo()
-            self.log(f'detection: {result}')
+            yasmin.YASMIN_LOG_INFO(f'detection: {result}')
 
             now = self.node.get_clock().now().nanoseconds
             name = f'photo-{now}.png'
             cv2.imwrite(name, img)
-            self.log(f'Save raw photo: {name}.')
+            yasmin.YASMIN_LOG_INFO(f'Save raw photo: {name}.')
 
             annotated = detector.draw_detections(img, result)
             annotated_name = f'photo-{now}-annotated.png'
             cv2.imwrite(annotated_name, annotated)
-            self.log(f'Save annotated photo: {annotated_name}.')
+            yasmin.YASMIN_LOG_INFO(f'Save annotated photo: {annotated_name}.')
 
             # Search aruco number
             find_arucos = []
@@ -93,15 +78,12 @@ class Search(State):
                     find_arucos.append((d, 5))
 
             if not find_arucos:
-                self.log(
-                    'Aruco not found.',
-                    style='error'
-                )
+                yasmin.YASMIN_LOG_ERROR('Aruco not found.')
                 count = 0
                 continue
 
             aruco, target_base['number'] = max(find_arucos, key=lambda a: a[0].confidence)
-            self.log(f'Aruco found. Target number: {target_base["number"]}.')
+            yasmin.YASMIN_LOG_INFO(f'Aruco found. Target number: {target_base["number"]}.')
 
             # Search aruco shape
             aruco_shapes = []
@@ -110,10 +92,7 @@ class Search(State):
                     aruco_shapes.append(s)
 
             if not aruco_shapes:
-                self.log(
-                    'Shape of aruco not found.',
-                    style='error'
-                )
+                yasmin.YASMIN_LOG_ERROR('Shape of aruco not found.')
                 count = 0
                 continue
 
@@ -123,7 +102,7 @@ class Search(State):
             )
 
             target_base['shape'] = aruco_shape.class_name
-            self.log(f'Shape of aruco found. Target shape: {target_base["shape"]}.')
+            yasmin.YASMIN_LOG_INFO(f'Shape of aruco found. Target shape: {target_base["shape"]}.')
 
             # Save target base on blackboard
             blackboard['target_base'] = target_base
@@ -136,10 +115,7 @@ class Search(State):
                         landing_bases.append((s, n))
 
             if not landing_bases:
-                self.log(
-                    'Target base found, but landing base not found.',
-                    style='error'
-                )
+                yasmin.YASMIN_LOG_ERROR('Target base found, but landing base not found.')
                 count = 0
                 continue
 
@@ -148,17 +124,14 @@ class Search(State):
                 key=lambda l: l[0].confidence * l[1].confidence
             )
 
-            self.log(f'Landing base found.')
+            yasmin.YASMIN_LOG_INFO(f'Landing base found.')
             count += 1
 
             if count >= SEARCH_DETECTIONS_LOST_TOLERANCE:
-                self.log('Completed successfully.')
+                yasmin.YASMIN_LOG_INFO('Completed successfully.')
                 return SUCCEED
 
-        self.log(
-            'Target and/or landing base not found.',
-            style='error'
-        )
+        yasmin.YASMIN_LOG_ERROR('Target and/or landing base not found.')
         return FAIL
 
 
