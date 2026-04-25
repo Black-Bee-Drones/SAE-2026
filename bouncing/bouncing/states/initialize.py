@@ -28,6 +28,7 @@ class Initialize(State):
 
         yasmin.YASMIN_LOG_INFO('Initializing \"target_base\"...')
         blackboard['target_base'] = {} # {shape, number}
+        # blackboard['target_base'] = {'shape': '0', 'number': '5'}
 
 
         yasmin.YASMIN_LOG_INFO('Initializing MavrosDrone...')

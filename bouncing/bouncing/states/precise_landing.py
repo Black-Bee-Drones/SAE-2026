@@ -1,4 +1,5 @@
 import cv2
+import os
 
 from rclpy.duration import Duration
 
@@ -80,15 +81,17 @@ class PreciseLanding(State):
             yasmin.YASMIN_LOG_INFO(f'Take and process photo.')
             img, result = image_handler.take_photo()
 
+            os.makedirs('photos', exist_ok=True)
             now = self.node.get_clock().now().nanoseconds
-            name = f'photo-{now}.png'
-            cv2.imwrite(name, img)
-            yasmin.YASMIN_LOG_INFO(f'Save raw photo: {name}.')
-
+            cv2.imwrite( 
+                os.path.join('photos', f'landing-{now}.png'),
+                img,
+            )
             annotated = detector.draw_detections(img, result)
-            annotated_name = f'photo-{now}-annotated.png'
-            cv2.imwrite(annotated_name, annotated)
-            yasmin.YASMIN_LOG_INFO(f'Save annotated photo: {annotated_name}.')
+            cv2.imwrite(
+                os.path.join('photos', f'landing-{now}-annotated.png'),
+                annotated
+            )
 
             # Search number inside shape
             landing_bases = []
@@ -133,13 +136,14 @@ class PreciseLanding(State):
             center = landing_base_number.center
 
             # normalized error
-            error_x = (center[0] - (w / 2)) / drone.rel_alt
-            error_y = (center[1] - (h / 2)) / drone.rel_alt
+            error_x = (center[1] - (h / 2)) / drone.rel_alt
+            error_y = (center[0] - (w / 2)) / drone.rel_alt
 
             output_x = self.pid_x.update(error_x)
             output_y = self.pid_y.update(error_y)
 
-            yasmin.YASMIN_LOG_INFO(f'Detection: \n\terror_x={error_x}, \n\terror_y={error_y}, \n\toutput_x={output_x}, \n\toutput_y={output_y}')
+            yasmin.YASMIN_LOG_INFO(f'Detection: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
+
             drone.move_velocity(
                 vx = output_x,
                 vy = output_y,

@@ -1,4 +1,5 @@
 import cv2
+import os
 
 import yasmin
 from yasmin_ros.yasmin_node import YasminNode
@@ -39,17 +40,18 @@ class Search(State):
         for i in range(SEARCH_NUMBER_DETECTIONS):
             yasmin.YASMIN_LOG_INFO(f'Take and process photo {i+1}/{SEARCH_NUMBER_DETECTIONS}.')
             img, result = image_handler.take_photo()
-            yasmin.YASMIN_LOG_INFO(f'detection: {result}')
 
+            os.makedirs('photos', exist_ok=True)
             now = self.node.get_clock().now().nanoseconds
-            name = f'photo-{now}.png'
-            cv2.imwrite(name, img)
-            yasmin.YASMIN_LOG_INFO(f'Save raw photo: {name}.')
-
+            cv2.imwrite( 
+                os.path.join('photos', f'search-{now}.png'),
+                img,
+            )
             annotated = detector.draw_detections(img, result)
-            annotated_name = f'photo-{now}-annotated.png'
-            cv2.imwrite(annotated_name, annotated)
-            yasmin.YASMIN_LOG_INFO(f'Save annotated photo: {annotated_name}.')
+            cv2.imwrite(
+                os.path.join('photos', f'search-{now}-annotated.png'),
+                annotated
+            )
 
             # Search aruco number
             find_arucos = []
