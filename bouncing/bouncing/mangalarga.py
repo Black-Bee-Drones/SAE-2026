@@ -1,5 +1,3 @@
-# Main State Machine for Bouncing
-
 import rclpy
 
 import yasmin

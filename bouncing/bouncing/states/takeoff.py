@@ -7,15 +7,12 @@ from nectar.control import MavrosDrone
 
 from bouncing.constants import (
     TAKEOFF_ALTITUDE,
-    TAKEOFF_SLEEP,
 )
 
 
 class Takeoff(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
-
-        self.node = YasminNode.get_instance()
 
 
     def execute(self, blackboard: Blackboard):
@@ -29,7 +26,6 @@ class Takeoff(State):
         yasmin.YASMIN_LOG_INFO(f'Taking off to altitude: {TAKEOFF_ALTITUDE}m...')
         try:
             drone.takeoff(TAKEOFF_ALTITUDE)
-            drone.delay(TAKEOFF_SLEEP)
         except Exception as e:
             yasmin.YASMIN_LOG_ERROR(f'Taking off failed: {e}.')
             return ABORT
