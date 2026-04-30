@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             f"mangalarga = {package_name}.mangalarga:main",
+            f"bouncing = {package_name}.bouncing:main",
         ],
     },
 )
