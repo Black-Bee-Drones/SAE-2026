@@ -9,7 +9,7 @@ CAMERA_CONFIG = OpenCVConfig(
     width=1280,
     height=720,
     threaded=False,
-    device_index=2,
+    device_index=0,
 )
 
 MODEL_SOURCE = str(

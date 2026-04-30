@@ -1,6 +1,3 @@
-import cv2
-import os
-
 from rclpy.duration import Duration
 
 import yasmin
@@ -10,7 +7,6 @@ from yasmin_ros.basic_outcomes import SUCCEED, FAIL, TIMEOUT, ABORT
 
 from nectar.control import MavrosDrone, PIDController
 from nectar.vision import ImageHandler
-from nectar.ai import Detector
 
 from bouncing.constants import (
     PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE,
@@ -59,11 +55,6 @@ class PreciseLanding(State):
             return ABORT
         target_base: dict = blackboard['target_base']
 
-        if ('detector' not in blackboard) or not blackboard['detector']:
-            yasmin.YASMIN_LOG_ERROR(f'Detector not available.')
-            return ABORT
-        detector: Detector = blackboard['detector']
-
         yasmin.YASMIN_LOG_INFO('Start.')
 
         yasmin.YASMIN_LOG_INFO(f'Start PID in landing base: {target_base}.')
@@ -79,24 +70,12 @@ class PreciseLanding(State):
                 return SUCCEED
 
             yasmin.YASMIN_LOG_INFO(f'Take and process photo.')
-            img, result = image_handler.take_photo()
-
-            os.makedirs('photos', exist_ok=True)
-            now = self.node.get_clock().now().nanoseconds
-            cv2.imwrite( 
-                os.path.join('photos', f'landing-{now}.png'),
-                img,
-            )
-            annotated = detector.draw_detections(img, result)
-            cv2.imwrite(
-                os.path.join('photos', f'landing-{now}-annotated.png'),
-                annotated
-            )
+            result = image_handler.take_photo()
 
             # Search number inside shape
             landing_bases = []
-            for s in list(d for d in result if d.class_name == target_base['shape']):  # all target shapes
-                for n in list(d for d in result if d.class_name == str(target_base['number'])):  # all target numbers
+            for s in result.filter_by_class([target_base['shape']]):
+                for n in result.filter_by_class([target_base['number']]):
                     if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
                         landing_bases.append((s, n))
 
@@ -109,7 +88,7 @@ class PreciseLanding(State):
             # Search number
             else:
                 yasmin.YASMIN_LOG_INFO('Shape not found. Try get number.')
-                numbers = list(d for d in result if d.class_name == str(target_base['number']))
+                numbers = result.filter_by_class([target_base['number']])
 
                 if not numbers:
                     lost_detection_count += 1
@@ -132,7 +111,7 @@ class PreciseLanding(State):
 
             lost_detection_count = 0
 
-            h, w = img.shape[:2]
+            h, w = result.image.shape[:2]
             center = landing_base_number.center
 
             # normalized error

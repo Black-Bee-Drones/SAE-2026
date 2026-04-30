@@ -1,5 +1,4 @@
 import cv2
-import os
 
 import yasmin
 from yasmin_ros.yasmin_node import YasminNode
@@ -7,7 +6,6 @@ from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, ABORT
 
 from nectar.vision import ImageHandler
-from nectar.ai import Detector
 
 from bouncing.constants import (
     SEARCH_NUMBER_DETECTIONS,
@@ -27,11 +25,6 @@ class Search(State):
             return ABORT
         image_handler: ImageHandler = blackboard['image_handler']
 
-        if ('detector' not in blackboard) or not blackboard['detector']:
-            yasmin.YASMIN_LOG_ERROR(f'Detector not available.')
-            return ABORT
-        detector: Detector = blackboard['detector']
-
         yasmin.YASMIN_LOG_INFO('Start.')
 
         target_base = {} # {shape, number}
@@ -39,33 +32,21 @@ class Search(State):
         count = 0
         for i in range(SEARCH_NUMBER_DETECTIONS):
             yasmin.YASMIN_LOG_INFO(f'Take and process photo {i+1}/{SEARCH_NUMBER_DETECTIONS}.')
-            img, result = image_handler.take_photo()
-
-            os.makedirs('photos', exist_ok=True)
-            now = self.node.get_clock().now().nanoseconds
-            cv2.imwrite( 
-                os.path.join('photos', f'search-{now}.png'),
-                img,
-            )
-            annotated = detector.draw_detections(img, result)
-            cv2.imwrite(
-                os.path.join('photos', f'search-{now}-annotated.png'),
-                annotated
-            )
+            result = image_handler.take_photo()
 
             # Search aruco number
             find_arucos = []
-            for d in list(d for d in result if d.class_name == '6'): # aruco detections
+            for d in result.filter_by_class(['6']): # aruco detections
                 x1, y1, x2, y2 = d.bbox
 
-                h, w = img.shape[:2]
+                h, w = result.image.shape[:2]
 
                 x1 = min(w, max(0, int(x1 - w / 2)))
                 y1 = min(h, max(0, int(y1 - h / 2)))
                 x2 = min(w, max(0, int(x2 + w / 2)))
                 y2 = min(h, max(0, int(y2 + h / 2)))
 
-                crop = img[y1:y2, x1:x2]
+                crop = result.image[y1:y2, x1:x2]
 
                 n = self.get_number_of_aruco(crop)
 
@@ -89,7 +70,7 @@ class Search(State):
 
             # Search aruco shape
             aruco_shapes = []
-            for s in list(d for d in result if d.class_name in ('0', '1', '2')):  # all shapes
+            for s in result.filter_by_class(['0', '1', '2']):  # all shapes
                 if (abs(aruco.center[0] - s.center[0]) <= s.width / 2) and (abs(aruco.center[1] - s.center[1]) <= s.height / 2):
                     aruco_shapes.append(s)
 
@@ -111,8 +92,8 @@ class Search(State):
 
             # Search Landing base
             landing_bases = []
-            for s in list(d for d in result if d.class_name == target_base['shape']):  # all target shapes
-                for n in list(d for d in result if d.class_name == str(target_base['number'])):  # all target numbers
+            for s in result.filter_by_class([target_base['shape']]):  # all target shapes
+                for n in result.filter_by_class([target_base['number']]):  # all target numbers
                     if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
                         landing_bases.append((s, n))
 
