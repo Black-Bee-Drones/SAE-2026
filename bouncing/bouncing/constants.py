@@ -13,7 +13,7 @@ CAMERA_CONFIG = OpenCVConfig(
 )
 
 MODEL_SOURCE = str(
-    Path(get_package_share_directory("bouncing")) / "models" / "last.pt"
+    Path(get_package_share_directory("bouncing")) / "models" / "best.pt"
 )
 MODEL_CONFIDENCE_THRESHOLD = 0.5
 
