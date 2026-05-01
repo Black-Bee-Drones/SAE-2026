@@ -9,6 +9,7 @@ from bouncing.states import (
     Initialize,
     Takeoff,
     PreciseLanding,
+    Recovery,
     Land,
 )
 
@@ -30,7 +31,12 @@ class Bouncing(StateMachine):
         self.add_state(
             "PRECISE_LANDING",
             PreciseLanding(),
-            transitions={SUCCEED:"LAND", FAIL: "LAND", TIMEOUT: "LAND", ABORT:"LAND"},
+            transitions={SUCCEED:"LAND", FAIL: "RECOVERY", TIMEOUT: "LAND", ABORT:"LAND"},
+        )
+        self.add_state(
+            "RECOVERY",
+            Recovery(),
+            transitions={SUCCEED:"PRECISE_LANDING", FAIL: "LAND", ABORT:"LAND"},
         )
         self.add_state(
             "LAND",
