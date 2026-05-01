@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
             f"mangalarga = {package_name}.mangalarga:main",
             f"pid_machine = {package_name}.pid_machine:main",
+            f"view_camera = {package_name}.utils.view_camera:main",
         ],
     },
 )
