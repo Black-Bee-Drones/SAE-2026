@@ -126,7 +126,7 @@ class PreciseLanding(State):
             drone.move_velocity(
                 vx = output_x,
                 vy = output_y,
-                vz = -PRECISE_LANDING_VERTICAL_SPEED if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2) else 0.0,
+                vz = PRECISE_LANDING_VERTICAL_SPEED if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2) else 0.0,
                 vyaw = 0.0,
             )
 
