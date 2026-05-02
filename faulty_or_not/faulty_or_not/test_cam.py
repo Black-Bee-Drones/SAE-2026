@@ -4,21 +4,18 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
-from nectar.vision.camera.drivers.imx219_cam import IMX219Cam
-from nectar.vision.camera.config import IMX219Config
 
 class TestCam(Node):
     def __init__(self):
         super().__init__('test_cam')
         self.pub = self.create_publisher(CompressedImage, '/gauge/compressed', 10)
         self.timer = self.create_timer(0.01, self.timer_callback)
-        self.config = IMX219Config()
-        self.camera = IMX219Cam(self.config)
+        self.camera = cv2.VideoCapture(0)  
         self.camera.start()
 
     def timer_callback(self):
-        self.frame = self.camera.get_frame()
-        if self.frame is None:
+        ret, self.frame = self.camera.read()
+        if not ret:
             return
         
         height, width = self.frame.shape[:2]

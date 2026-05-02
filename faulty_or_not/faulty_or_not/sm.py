@@ -44,7 +44,7 @@ class FaultyOrNot(StateMachine):
         )
         self.add_state(
             "GAUGE_READING",
-            GaugeReading(model_path=MODEL_PATH, cam=cam),
+            GaugeReading(model_path=MODEL_PATH, coarse_model_path=MODEL_PATH, cam=cam),
             transitions={SUCCEED:"AUDIO_FEEDBACK", ABORT:"RETURN_TO_LAUNCH"},
         )
         self.add_state(

@@ -54,7 +54,9 @@ class Navigation(State):
         )
 
         try:
-            handler = self.drone.goto_local(x=x, y=y, z=z, face_wp=True)
+            # handler = self.drone.goto_local(x=x, y=y, z=z, face_wp=True)
+            global_origin=blackboard["global_origin"]
+            handler = self.drone.goto_global(x=x, y=y, z=z, origin=global_origin, face_wp=True)
             time.sleep(5)
             blackboard["goto_handler"] = handler
 

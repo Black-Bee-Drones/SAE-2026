@@ -24,6 +24,7 @@ class Takeoff(State):
 
         try:
             self.drone.arm().wait()
+            blackboard["global_origin"] = self.drone.capture_origin(global_origin=True)
             self.drone.takeoff(TAKEOFF_ALTITUDE).wait(timeout=20)
             print("Primary origin:", self.drone.primary_origin)
             yasmin.YASMIN_LOG_INFO("Takeoff successful.")
