@@ -100,16 +100,16 @@ class Initialize(State):
 
     def callback_detector(self, image):
         timestamp = self.node.get_clock().now().nanoseconds
-        os.makedirs('photos', exist_ok=True)
+        os.makedirs('photos-bouncing', exist_ok=True)
 
-        raw_path = os.path.join('photos', f'photos-{timestamp}.png')
+        raw_path = os.path.join('photos-bouncing', f'photos-{timestamp}.png')
         cv2.imwrite(raw_path, image)
 
         result = self.detector.detect(image)
         result.image = image
 
         annotated = self.detector.draw_detections(image, result)
-        ann_path = os.path.join('photos', f'photos-{timestamp}-annotated.png')
+        ann_path = os.path.join('photos-bouncing', f'photos-{timestamp}-annotated.png')
         cv2.imwrite(ann_path, annotated)
 
         return result
