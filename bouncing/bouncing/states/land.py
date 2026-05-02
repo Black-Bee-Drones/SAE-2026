@@ -16,7 +16,7 @@ class Land(State):
             return ABORT
         drone: MavrosDrone = blackboard['drone']
 
-        yasmin.YASMIN_LOG_INFO('Start.')
+        yasmin.YASMIN_LOG_INFO('Landing...')
 
         try:
             drone.land()
