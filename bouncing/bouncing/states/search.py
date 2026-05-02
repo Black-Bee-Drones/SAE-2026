@@ -65,7 +65,8 @@ class Search(State):
                 count = 0
                 continue
 
-            aruco, target_base['number'] = max(find_arucos, key=lambda a: a[0].confidence)
+            aruco, number = max(find_arucos, key=lambda a: a[0].confidence)
+            target_base['number'] = str(number)
             yasmin.YASMIN_LOG_INFO(f'Aruco found. Target number: {target_base["number"]}.')
 
             # Search aruco shape
