@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 import rclpy
 from rclpy.node import Node

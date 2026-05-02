@@ -84,7 +84,7 @@ class Initialize(State):
                 self.image_handler.open()
 
                 yasmin.YASMIN_LOG_INFO('Take testing photo...')
-                _, result = self.image_handler.take_photo()
+                result = self.image_handler.take_photo()
 
                 blackboard['image_handler'] = self.image_handler
                 yasmin.YASMIN_LOG_INFO('Successfull start ImageHandler...')

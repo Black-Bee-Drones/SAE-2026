@@ -11,16 +11,14 @@ from nectar.vision import ImageHandler
 from bouncing.constants import (
     PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE,
     PRECISE_LANDING_TIMEOUT,
-    PRECISE_LANDING_VERTICAL_SPEED,
     PRECISE_LANDING_ALING_TOLERANCE,
-    PRECISE_LANDING_LAND_ALTITUDE,
     CONTROLER_P_XY,
     CONTROLER_I_XY,
     CONTROLER_D_XY,
 )
 
 
-class PreciseLanding(State):
+class Hover(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, FAIL, TIMEOUT, ABORT])
 
@@ -63,48 +61,27 @@ class PreciseLanding(State):
         duration = Duration(seconds=PRECISE_LANDING_TIMEOUT)
         while self.node.get_clock().now() - start < duration:
 
-            if drone.rel_alt <= PRECISE_LANDING_LAND_ALTITUDE:
-                yasmin.YASMIN_LOG_INFO(f'Completed successfully.')
-                drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                drone.delay(1.0)
-                return SUCCEED
-
             yasmin.YASMIN_LOG_INFO(f'Take and process photo.')
             result = image_handler.take_photo()
 
-            # Search number inside shape
-            landing_bases = []
-            for s in result.filter_by_class([target_base['shape']]):
-                for n in result.filter_by_class([target_base['number']]):
-                    if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
-                        landing_bases.append((s, n))
-
-            if landing_bases:
-                landing_bases_shape, landing_base_number = max(
-                    landing_bases,
-                    key=lambda l: l[0].confidence * l[1].confidence
-                )
-
             # Search number
+            numbers = result.filter_by_class([target_base['number']])
+
+            if not numbers:
+                lost_detection_count += 1
+                drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
+
+                if lost_detection_count >= PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE:
+                    yasmin.YASMIN_LOG_ERROR('It lost detection many times.')
+                    return FAIL
+                continue
+
             else:
-                yasmin.YASMIN_LOG_INFO('Shape not found. Try get number.')
-                numbers = result.filter_by_class([target_base['number']])
-
-                if not numbers:
-                    lost_detection_count += 1
-                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                    yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
-
-                    if lost_detection_count >= PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE:
-                        yasmin.YASMIN_LOG_ERROR('It lost detection many times.')
-                        return FAIL
-                    continue
-
-                else:
-                    landing_base_number = max(
-                        numbers,
-                        key=lambda n: n.confidence * n.area
-                    )
+                landing_base_number = max(
+                    numbers,
+                    key=lambda n: n.confidence * n.area
+                )
 
             lost_detection_count = 0
 
@@ -121,13 +98,9 @@ class PreciseLanding(State):
             yasmin.YASMIN_LOG_INFO(f'Detection: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
 
             if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2):
-                drone.move_velocity(
-                    vx = output_x * 2,
-                    vy = output_y * 2,
-                    vz = PRECISE_LANDING_VERTICAL_SPEED,
-                    vyaw = 0.0,
-                )
-
+                drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                drone.delay(0.5)
+                return SUCCEED
             else:
                 drone.move_velocity(
                     vx = output_x,

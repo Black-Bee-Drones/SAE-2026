@@ -11,6 +11,7 @@ from bouncing.states import (
     Search,
     PreciseLanding,
     Recovery,
+    Hover,
     Land,
 )
 
@@ -37,12 +38,17 @@ class Bouncing(StateMachine):
         self.add_state(
             "PRECISE_LANDING",
             PreciseLanding(),
-            transitions={SUCCEED:"LAND", FAIL: "RECOVERY", TIMEOUT: "LAND", ABORT:"LAND"},
+            transitions={SUCCEED:"HOVER", FAIL: "RECOVERY", TIMEOUT: "LAND", ABORT:"LAND"},
         )
         self.add_state(
             "RECOVERY",
             Recovery(),
             transitions={SUCCEED:"PRECISE_LANDING", FAIL: "LAND", ABORT:"LAND"},
+        )
+        self.add_state(
+            "HOVER",
+            Hover(),
+            transitions={SUCCEED:"LAND", FAIL: "RECOVERY", ABORT:"LAND"},
         )
         self.add_state(
             "LAND",
