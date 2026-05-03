@@ -30,12 +30,14 @@ class PreciseLanding(State):
             kp=CONTROLER_P_XY,
             ki=CONTROLER_I_XY,
             kd=CONTROLER_D_XY,
+            output_limits=(-0.3, 0.3),
         )
 
         self.pid_y = PIDController(
             kp=CONTROLER_P_XY,
             ki=CONTROLER_I_XY,
             kd=CONTROLER_D_XY,
+            output_limits=(-0.3, 0.3),
         )
 
 
@@ -88,7 +90,18 @@ class PreciseLanding(State):
             # Search number
             else:
                 yasmin.YASMIN_LOG_INFO('Shape not found. Try get number.')
-                numbers = result.filter_by_class([target_base['number']])
+                bases = ['0', '1', '2']
+                bases.remove(target_base["shape"])
+                numbers = []
+                for n in result.filter_by_class([target_base['number']]):
+                    valido = True
+
+                    for s in result.filter_by_class(bases):
+                        if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
+                            valido = False
+
+                    if valido:
+                        numbers.append(n)
 
                 if not numbers:
                     lost_detection_count += 1
@@ -112,29 +125,20 @@ class PreciseLanding(State):
             center = landing_base_number.center
 
             # normalized error
-            error_x = (center[1] - (h / 2)) / drone.rel_alt
-            error_y = (center[0] - (w / 2)) / drone.rel_alt
+            error_x = (center[1] - (h / 2)) / drone.get_altitude()
+            error_y = (center[0] - (w / 2)) / drone.get_altitude()
 
             output_x = self.pid_x.update(error_x)
             output_y = self.pid_y.update(error_y)
 
             yasmin.YASMIN_LOG_INFO(f'Detection: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
 
-            if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2):
-                drone.move_velocity(
-                    vx = output_x * 2,
-                    vy = output_y * 2,
-                    vz = PRECISE_LANDING_VERTICAL_SPEED,
-                    vyaw = 0.0,
-                )
-
-            else:
-                drone.move_velocity(
-                    vx = output_x,
-                    vy = output_y,
-                    vz = 0.0,
-                    vyaw = 0.0,
-                )
+            drone.move_velocity(
+                vx = output_x,
+                vy = output_y,
+                vz = (PRECISE_LANDING_VERTICAL_SPEED/2) if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2) else PRECISE_LANDING_VERTICAL_SPEED,
+                vyaw = 0.0,
+            )
 
         yasmin.YASMIN_LOG_INFO('Timeout.')
         return TIMEOUT

@@ -9,9 +9,9 @@ from nectar.control import MavrosDrone, PIDController
 from nectar.vision import ImageHandler
 
 from bouncing.constants import (
-    PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE,
-    PRECISE_LANDING_TIMEOUT,
-    PRECISE_LANDING_ALING_TOLERANCE,
+    HOVER_DETECTIONS_LOST_TOLERANCE,
+    HOVER_TIMEOUT,
+    HOVER_ALING_TOLERANCE,
     CONTROLER_P_XY,
     CONTROLER_I_XY,
     CONTROLER_D_XY,
@@ -28,12 +28,14 @@ class Hover(State):
             kp=CONTROLER_P_XY,
             ki=CONTROLER_I_XY,
             kd=CONTROLER_D_XY,
+            output_limits=(-0.3, 0.3),
         )
 
         self.pid_y = PIDController(
             kp=CONTROLER_P_XY,
             ki=CONTROLER_I_XY,
             kd=CONTROLER_D_XY,
+            output_limits=(-0.3, 0.3),
         )
 
 
@@ -58,21 +60,25 @@ class Hover(State):
         yasmin.YASMIN_LOG_INFO(f'Start PID in landing base: {target_base}.')
         lost_detection_count = 0
         start = self.node.get_clock().now()
-        duration = Duration(seconds=PRECISE_LANDING_TIMEOUT)
+        duration = Duration(seconds=HOVER_TIMEOUT)
         while self.node.get_clock().now() - start < duration:
 
             yasmin.YASMIN_LOG_INFO(f'Take and process photo.')
             result = image_handler.take_photo()
 
             # Search number
-            numbers = result.filter_by_class([target_base['number']])
+            h, w = result.image.shape[:2]
+            numbers = max(
+                result.filter_by_class([target_base['number']]),
+                key=lambda l: -((l.center[1] - (h / 2))**2 + (l.center[0] - (w / 2))**2)
+            )
 
             if not numbers:
                 lost_detection_count += 1
                 drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
+                yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{HOVER_DETECTIONS_LOST_TOLERANCE}).')
 
-                if lost_detection_count >= PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE:
+                if lost_detection_count >= HOVER_DETECTIONS_LOST_TOLERANCE:
                     yasmin.YASMIN_LOG_ERROR('It lost detection many times.')
                     return FAIL
                 continue
@@ -89,15 +95,15 @@ class Hover(State):
             center = landing_base_number.center
 
             # normalized error
-            error_x = (center[1] - (h / 2)) / drone.rel_alt
-            error_y = (center[0] - (w / 2)) / drone.rel_alt
+            error_x = (center[1] - (h / 2)) / drone.get_altitude()
+            error_y = (center[0] - (w / 2)) / drone.get_altitude()
 
             output_x = self.pid_x.update(error_x)
             output_y = self.pid_y.update(error_y)
 
             yasmin.YASMIN_LOG_INFO(f'Detection: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
 
-            if (error_x ** 2 + error_y ** 2 <= PRECISE_LANDING_ALING_TOLERANCE ** 2):
+            if (error_x ** 2 + error_y ** 2 <= HOVER_ALING_TOLERANCE ** 2):
                 drone.move_velocity(0.0, 0.0, 0.0, 0.0)
                 drone.delay(0.5)
                 return SUCCEED
