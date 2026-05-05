@@ -1,6 +1,7 @@
 from std_msgs.msg import UInt8
 import cv2
 import random
+import os
 from yasmin import Blackboard
 from yasmin import State
 from yasmin_ros.yasmin_node import YasminNode
@@ -82,7 +83,11 @@ class AudioFeedback(State):
                 )
 
         if "inference_image_cv" in blackboard and blackboard["inference_image_cv"] is not None:
-            cv2.imwrite(f"/home/jetson/Pictures/detection_waypoint_{control_index}.jpg", blackboard["inference_image_cv"])
+            save_dir = os.path.join(os.path.expanduser("~"), "faulty_images")
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, f"detection_waypoint_{control_index}.jpg")
+            cv2.imwrite(save_path, blackboard["inference_image_cv"])
+            self.node.get_logger().info(f"Inference image saved to: {save_path}")
 
         if control_index == len(locations) - 1:
             self.node.get_logger().info(f"Final waypoint {control_index} processed, ending mission.")
