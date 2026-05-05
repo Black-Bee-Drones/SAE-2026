@@ -14,10 +14,13 @@ TAKEOFF_ALTITUDE = 2.5
 try:
     package_share_directory = get_package_share_directory('faulty_or_not')
     MODEL_PATH = os.path.join(package_share_directory, 'models', 'best.pt')
+    COARSE_MODEL_PATH = os.path.join(package_share_directory, 'models', 'coarse.pt')
 except:
     # Fallback
     current_dir = os.path.dirname(os.path.abspath(__file__))
     package_root = os.path.dirname(current_dir)
     MODEL_PATH = os.path.join(package_root, 'models', 'best.pt')
+    COARSE_MODEL_PATH = os.path.join(package_share_directory, 'models', 'coarse.pt')
+
 
 SIMULATION = True
