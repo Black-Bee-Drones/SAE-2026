@@ -54,10 +54,8 @@ class Navigation(State):
         )
 
         try:
-            # handler = self.drone.goto_local(x=x, y=y, z=z, face_wp=True)
-            global_origin=blackboard["global_origin"]
-            handler = self.drone.goto_global(x=x, y=y, z=z, origin=global_origin, face_wp=True)
-            time.sleep(5)
+            handler = self.drone.goto_local(x=x, y=y, z=z, face_wp=True)
+            
             blackboard["goto_handler"] = handler
 
             yasmin.YASMIN_LOG_INFO(f"Reached waypoint {control_index}.")
