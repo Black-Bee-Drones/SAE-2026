@@ -9,6 +9,7 @@ from nectar.control import MavrosDrone, PIDController
 from nectar.vision import ImageHandler
 
 from bouncing.constants import (
+    HOVER_DETECTIONS_LOST_RESET_PID_TOLERANCE,
     HOVER_DETECTIONS_LOST_TOLERANCE,
     HOVER_TIMEOUT,
     HOVER_ALING_TOLERANCE,
@@ -66,28 +67,46 @@ class Hover(State):
             yasmin.YASMIN_LOG_INFO(f'Take and process photo.')
             result = image_handler.take_photo()
 
-            # Search number
-            h, w = result.image.shape[:2]
-            numbers = max(
-                result.filter_by_class([target_base['number']]),
-                key=lambda l: -((l.center[1] - (h / 2))**2 + (l.center[0] - (w / 2))**2)
-            )
+            landing_bases = []
+            numbers = []
+            for n in result.filter_by_class([target_base['number']]):
+                valid_number = True
+                for s in result.filter_by_class(['0', '1', '2']):
+                    if (s.class_id == target_base['shape']):
+                        if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
+                            landing_bases.append(n)
 
-            if not numbers:
+                    else:
+                        if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
+                            valid_number = False
+
+                if valid_number:
+                    numbers.append(n)
+
+
+            if landing_bases:
+                landing_base_number = max(
+                    landing_bases,
+                    key=lambda l: l.confidence * l.area
+                )
+            elif numbers:
+                landing_base_number = max(
+                    numbers,
+                    key=lambda n: n.confidence * n.area
+                )
+            else:
                 lost_detection_count += 1
                 drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{HOVER_DETECTIONS_LOST_TOLERANCE}).')
+                yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
+
+                if lost_detection_count >= HOVER_DETECTIONS_LOST_RESET_PID_TOLERANCE:
+                    self.pid_x.reset()
+                    self.pid_y.reset()
 
                 if lost_detection_count >= HOVER_DETECTIONS_LOST_TOLERANCE:
                     yasmin.YASMIN_LOG_ERROR('It lost detection many times.')
                     return FAIL
                 continue
-
-            else:
-                landing_base_number = max(
-                    numbers,
-                    key=lambda n: n.confidence * n.area
-                )
 
             lost_detection_count = 0
 
