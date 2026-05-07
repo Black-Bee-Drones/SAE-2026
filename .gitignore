@@ -1,0 +1,57 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+develop-eggs/
+sdist/
+wheels/
+pip-wheel-metadata/
+
+# --- ROS 2 / colcon (in case anyone runs colcon from inside the package) ---
+build/
+install/
+log/
+COLCON_IGNORE
+
+# --- Tests / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Mission runtime artifacts ---
+# DETECTION_SAVE_PATH defaults to ~/sae2026 (outside the repo);
+# ignore the in-tree path too in case it's overridden.
+hook/sae2026/
+sae2026/
+*.bag
+*.db3
+
+# --- Simulation runtime ---
+# Temp SDF files rendered by sae_hook.launch.py go to /tmp by default,
+# but ignore in-tree just in case.
+hook/simulation/worlds/sae_hook_arena_runtime*.sdf
+sae_hook_arena_*.sdf
+!hook/simulation/worlds/sae_hook_arena.sdf
+
+# --- Models: KEEP tracked (.pt weights live here on purpose) ---
+# share/models/*.pt is committed

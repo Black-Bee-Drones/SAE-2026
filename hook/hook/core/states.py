@@ -10,24 +10,27 @@ from nectar.control import (
     MavrosConfig,
     MavrosDrone,
     PoseSource,
-    MoveReference,
     RTLMethod,
     SITL_GAZEBO_CONFIG,
 )
 from nectar.vision import ImageHandler, OpenCVConfig
-from nectar.ai.detection import Detector
+from nectar.vision.camera import ROSConfig
 from nectar.ai.segmentation import Segmentor
+from nectar.ai.detection import PerClassConfidenceFilter
 
 from hook.core.constants import (
-    SEARCH_ALTITUDE,
+    INITIAL_TAKEOFF_ALTITUDE,
     RTL_ALTITUDE,
     IMAGE_SOURCE,
     IMAGE_WIDTH,
     IMAGE_HEIGHT,
-    SPHERE_MODEL_PATH,
-    ROPE_MODEL_PATH,
-    SPHERE_CONF_THRESHOLD,
-    ROPE_CONF_THRESHOLD,
+    SEG_MODEL_PATH,
+    SEG_PREDICT_CONF,
+    SIM_IMAGE_COMPRESSED,
+    SPHERE_CLASS,
+    SPHERE_CONF,
+    HOSE_CLASS,
+    HOSE_CONF,
     SIM_MODE,
 )
 
@@ -41,13 +44,23 @@ class Initialize(State):
             node = YasminNode.get_instance()
             yasmin.YASMIN_LOG_INFO("Initializing drone...")
 
-            config = SITL_GAZEBO_CONFIG if SIM_MODE else MavrosConfig(pose_source=PoseSource.GPS)
+            config = (
+                SITL_GAZEBO_CONFIG
+                if SIM_MODE
+                else MavrosConfig(pose_source=PoseSource.GPS)
+            )
             drone = DroneFactory.create("mavros", config, node)
             blackboard["drone"] = drone
             drone.delay(1)
 
             yasmin.YASMIN_LOG_INFO("Initializing camera...")
-            cam_config = None if SIM_MODE else OpenCVConfig(width=IMAGE_WIDTH, height=IMAGE_HEIGHT)
+            if SIM_MODE:
+                cam_config = ROSConfig(
+                    topic=IMAGE_SOURCE,
+                    compressed=SIM_IMAGE_COMPRESSED,
+                )
+            else:
+                cam_config = OpenCVConfig(width=IMAGE_WIDTH, height=IMAGE_HEIGHT)
             camera = ImageHandler(
                 node=node,
                 image_source=IMAGE_SOURCE,
@@ -63,26 +76,28 @@ class Initialize(State):
             yasmin.YASMIN_LOG_INFO(f"Camera ready. Frame shape: {frame.shape}")
             blackboard["camera"] = camera
 
-            yasmin.YASMIN_LOG_INFO(f"Loading sphere detector: {SPHERE_MODEL_PATH}")
-            sphere_detector = Detector(
-                SPHERE_MODEL_PATH,
-                confidence_threshold=SPHERE_CONF_THRESHOLD,
+            yasmin.YASMIN_LOG_INFO(f"Loading segmentation model: {SEG_MODEL_PATH}")
+            segmentor = Segmentor(
+                SEG_MODEL_PATH, confidence_threshold=SEG_PREDICT_CONF
             )
-            sphere_detector.load()
-            dummy = np.zeros((640, 640, 3), dtype=np.uint8)
-            sphere_detector.detect(dummy)
-            blackboard["sphere_detector"] = sphere_detector
-            yasmin.YASMIN_LOG_INFO("Sphere detector ready.")
+            segmentor.load()
+            segmentor.segment(np.zeros((640, 640, 3), dtype=np.uint8))
+            blackboard["segmentor"] = segmentor
 
-            yasmin.YASMIN_LOG_INFO(f"Loading rope segmentor: {ROPE_MODEL_PATH}")
-            rope_segmentor = Segmentor(
-                ROPE_MODEL_PATH,
-                confidence_threshold=ROPE_CONF_THRESHOLD,
+            name_to_id = {v: k for k, v in segmentor.class_names.items()}
+            if SPHERE_CLASS not in name_to_id or HOSE_CLASS not in name_to_id:
+                yasmin.YASMIN_LOG_ERROR(
+                    f"Model classes mismatch: have {list(name_to_id)}"
+                )
+                return ABORT
+            blackboard["class_filter"] = PerClassConfidenceFilter(
+                threshold_mapping={
+                    name_to_id[SPHERE_CLASS]: SPHERE_CONF,
+                    name_to_id[HOSE_CLASS]: HOSE_CONF,
+                },
+                default_threshold=1.1,
             )
-            rope_segmentor.load()
-            rope_segmentor.segment(dummy)
-            blackboard["rope_segmentor"] = rope_segmentor
-            yasmin.YASMIN_LOG_INFO("Rope segmentor ready.")
+            yasmin.YASMIN_LOG_INFO("Segmentor + per-class filter ready.")
 
             yasmin.YASMIN_LOG_INFO("Initialization complete.")
             return SUCCEED
@@ -104,18 +119,10 @@ class Takeoff(State):
         drone: MavrosDrone = blackboard["drone"]
 
         try:
-            yasmin.YASMIN_LOG_INFO(f"Taking off to {SEARCH_ALTITUDE}m...")
-            drone.set_home()
-            drone.arm()
-            drone.takeoff(SEARCH_ALTITUDE)
-            drone.delay(3)
+            yasmin.YASMIN_LOG_INFO(f"Taking off to {INITIAL_TAKEOFF_ALTITUDE}m...")
 
-            reached = drone.move_to(
-                z=SEARCH_ALTITUDE,
-                reference=MoveReference.TAKEOFF,
-                timeout=30.0,
-                precision=0.3,
-            )
+            reached = drone.takeoff(INITIAL_TAKEOFF_ALTITUDE, max_retries=5)
+            drone.delay(2)
 
             if not reached:
                 yasmin.YASMIN_LOG_WARN("Takeoff move_to timed out, continuing.")

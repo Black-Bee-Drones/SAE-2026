@@ -1,89 +1,88 @@
-import time
-from typing import Optional, Tuple
+"""Perpendicular alignment over the chosen hose with the sphere as a side anchor.
 
-import cv2
-import numpy as np
+Convention: angle = 0 means hose runs horizontal in image, drone heading is
+perpendicular to the rope. Image axes mapped to body via FLU down-cam:
+  image -y -> body +x (forward)
+  image +x -> body -y (right)
+
+Control wiring:
+  vx   <- pid_center.update(hose_cy)           # forward/back to stay over hose
+  vy   <- pid_anchor.update(sphere_cx)         # lateral to anchor sphere offset
+  vyaw <- pid_yaw.update(angle_from_horizontal)
+"""
+
+import time
 from datetime import datetime
 from pathlib import Path
+from typing import Tuple
 
+import cv2
 import yasmin
 from yasmin import Blackboard, State
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
-from nectar.control import MavrosDrone, MoveReference, PIDController
-from nectar.vision import ImageHandler
+from nectar.ai.detection import PerClassConfidenceFilter
 from nectar.ai.segmentation import Segmentor
+from nectar.control import AltitudeSource, MavrosDrone, MoveReference, PIDController
+from nectar.vision import ImageHandler
 
 from hook.core.constants import (
-    IMAGE_CENTER_X,
-    ROPE_CONF_THRESHOLD,
-    HOSE_MIN_CONTOUR_AREA,
-    HOSE_ANGLE_TOLERANCE_DEG,
+    DETECTION_SAVE_PATH,
+    HOSE_ALIGN_CONFIRMATIONS,
+    HOSE_ALIGN_MAX_LOST_FRAMES,
+    HOSE_ALIGN_TIMEOUT,
     HOSE_ANGLE_KP,
     HOSE_ANGLE_MAX_VELOCITY,
-    HOSE_CENTER_TOLERANCE_PX,
+    HOSE_ANGLE_TOLERANCE_DEG,
     HOSE_CENTER_KP,
     HOSE_CENTER_MAX_VELOCITY,
-    HOSE_ALIGN_CONFIRMATIONS,
-    HOSE_ALIGN_TIMEOUT,
-    HOSE_ALIGN_MAX_LOST_FRAMES,
-    HOSE_OFFSET_DISTANCE,
+    HOSE_CENTER_TOLERANCE_PX,
+    IMAGE_CENTER_X,
+    IMAGE_CENTER_Y,
     SAVE_DETECTIONS,
-    DETECTION_SAVE_PATH,
+    SPHERE_ANCHOR_DISTANCE_M,
+    SPHERE_ANCHOR_KP,
+    SPHERE_ANCHOR_TOLERANCE_PX,
+)
+from hook.core.perception import (
+    best_sphere,
+    hook_image_offset,
+    hose_pose,
+    hose_segments,
+    pick_hose_by_dir,
+    px_per_meter,
+    run_seg,
 )
 
 
-def estimate_hose_pose(
-    mask: np.ndarray, min_area: int = 200
-) -> Optional[Tuple[float, float, float]]:
-    """Extract hose center and angle from a segmentation mask via minAreaRect.
+def _anchor_sign(blackboard: Blackboard, sphere_cx: float, hook_dx: float) -> int:
+    """Sign of the target sphere x-offset from the hook-corrected image center.
 
-    Returns (center_x, center_y, angle) where angle is the deviation from
-    vertical in degrees (0 = hose is vertical in image = drone perpendicular).
-    Returns None if the mask has no valid contour.
+    Snapshotted on first AlignToHose tick (or reused from blackboard) so it
+    stays stable through the state's yaw convergence.
     """
-    mask_u8 = mask.astype(np.uint8)
-    if mask_u8.max() == 1:
-        mask_u8 = mask_u8 * 255
-    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-    largest = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(largest) < min_area:
-        return None
-
-    rect = cv2.minAreaRect(largest)
-    (cx, cy), (w, h), raw_angle = rect
-
-    # Normalize angle so 0 = hose vertical in image.
-    # minAreaRect returns angle in [-90, 0) with width as the first side.
-    # We want: if the long axis is vertical, angle = 0.
-    if w < h:
-        angle = raw_angle + 90
-    else:
-        angle = raw_angle
-    if angle > 90:
-        angle -= 180
-    if angle < -90:
-        angle += 180
-
-    return cx, cy, angle
+    if "anchor_sign" in blackboard:
+        return blackboard["anchor_sign"]
+    sign = 1 if sphere_cx >= IMAGE_CENTER_X + hook_dx else -1
+    blackboard["anchor_sign"] = sign
+    return sign
 
 
 class AlignToHose(State):
-    """Align yaw perpendicular to hose and center above it using segmentation."""
-
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.pid_yaw = None
         self.pid_center = None
+        self.pid_anchor = None
         self.save_dir = None
         self.frame_count = 0
 
     def execute(self, blackboard: Blackboard):
         drone: MavrosDrone = blackboard["drone"]
         camera: ImageHandler = blackboard["camera"]
-        segmentor: Segmentor = blackboard["rope_segmentor"]
+        segmentor: Segmentor = blackboard["segmentor"]
+        class_filter: PerClassConfidenceFilter = blackboard["class_filter"]
+        side_unit: Tuple[float, float] = blackboard["hose_side_image_unit"]
 
         if self.pid_yaw is None:
             self.pid_yaw = PIDController(
@@ -94,116 +93,152 @@ class AlignToHose(State):
         if self.pid_center is None:
             self.pid_center = PIDController(
                 kp=HOSE_CENTER_KP,
-                setpoint=IMAGE_CENTER_X,
+                setpoint=IMAGE_CENTER_Y,
+                output_limits=(-HOSE_CENTER_MAX_VELOCITY, HOSE_CENTER_MAX_VELOCITY),
+            )
+        if self.pid_anchor is None:
+            self.pid_anchor = PIDController(
+                kp=SPHERE_ANCHOR_KP,
+                setpoint=0.0,
                 output_limits=(-HOSE_CENTER_MAX_VELOCITY, HOSE_CENTER_MAX_VELOCITY),
             )
 
         if SAVE_DETECTIONS:
-            ts = blackboard.get("mission_timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
+            ts = (
+                blackboard["mission_timestamp"]
+                if "mission_timestamp" in blackboard
+                else datetime.now().strftime("%Y%m%d_%H%M%S")
+            )
             self.save_dir = Path(DETECTION_SAVE_PATH) / ts / "align_hose"
             self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        yasmin.YASMIN_LOG_INFO("Aligning yaw perpendicular to hose...")
+        yasmin.YASMIN_LOG_INFO("Aligning perpendicular to hose with sphere anchor...")
 
-        aligned_count = 0
-        lost_count = 0
-        start_time = time.time()
+        aligned = 0
+        lost = 0
+        start = time.time()
 
-        while time.time() - start_time < HOSE_ALIGN_TIMEOUT:
-            frame = camera.take_photo()
-            if frame is None:
-                time.sleep(0.05)
-                continue
+        while time.time() - start < HOSE_ALIGN_TIMEOUT:
+            altitude = drone.get_altitude(AltitudeSource.LIDAR)
+            if altitude is None:
+                altitude = drone.get_altitude(AltitudeSource.AUTO)
 
-            result = segmentor.segment(frame, conf=ROPE_CONF_THRESHOLD)
-            self.frame_count += 1
+            frame, result = run_seg(camera, segmentor, class_filter)
+            sphere = best_sphere(result)
+            chosen = pick_hose_by_dir(sphere, hose_segments(result), side_unit)
+            pose = hose_pose(chosen) if chosen is not None else None
 
-            # Get the hose mask
-            seg_mask = None
-            if len(result) > 0:
-                seg = result[0]
-                seg_mask = seg.mask
-
-            if seg_mask is None:
-                lost_count += 1
-                if lost_count > HOSE_ALIGN_MAX_LOST_FRAMES:
-                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                    yasmin.YASMIN_LOG_ERROR("Lost hose during alignment.")
+            if sphere is None or pose is None:
+                lost += 1
+                if lost > HOSE_ALIGN_MAX_LOST_FRAMES:
+                    drone.move_velocity(
+                        0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY
+                    )
+                    yasmin.YASMIN_LOG_ERROR(
+                        "Lost sphere or chosen hose during alignment."
+                    )
                     return ABORT
                 time.sleep(0.05)
                 continue
 
-            pose = estimate_hose_pose(seg_mask, HOSE_MIN_CONTOUR_AREA)
-            if pose is None:
-                lost_count += 1
-                time.sleep(0.05)
-                continue
+            lost = 0
+            hose_cx, hose_cy, angle, _, _ = pose
+            sphere_cx, _ = sphere.center
 
-            lost_count = 0
-            cx, cy, angle = pose
+            ppm = px_per_meter(altitude) if altitude else 0.0
+            hook_dx, hook_dy = hook_image_offset(altitude)
+            anchor_px = SPHERE_ANCHOR_DISTANCE_M * ppm
+            sign = _anchor_sign(blackboard, sphere_cx, hook_dx)
+            target_hose_cy = IMAGE_CENTER_Y + hook_dy
+            target_sphere_cx = IMAGE_CENTER_X + hook_dx + sign * anchor_px
 
-            error_center = cx - IMAGE_CENTER_X
-            error_angle = angle
+            self.pid_center.setpoint = target_hose_cy
+            err_center = hose_cy - target_hose_cy
+            err_anchor = sphere_cx - target_sphere_cx
+            err_angle = angle
 
-            if SAVE_DETECTIONS and self.save_dir and self.frame_count % 5 == 0:
-                annotated = segmentor.draw_segmentations(frame, result)
-                cv2.drawMarker(
-                    annotated, (IMAGE_CENTER_X, int(cy)),
-                    (0, 255, 0), cv2.MARKER_CROSS, 30, 2,
-                )
-                cv2.putText(
-                    annotated, f"Angle: {angle:.1f} deg",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2,
-                )
-                cv2.imwrite(
-                    str(self.save_dir / f"align_{self.frame_count:04d}.jpg"),
-                    annotated,
-                )
+            angle_ok = abs(err_angle) < HOSE_ANGLE_TOLERANCE_DEG
+            center_ok = abs(err_center) < HOSE_CENTER_TOLERANCE_PX
+            anchor_ok = abs(err_anchor) < SPHERE_ANCHOR_TOLERANCE_PX
 
-            angle_ok = abs(error_angle) < HOSE_ANGLE_TOLERANCE_DEG
-            center_ok = abs(error_center) < HOSE_CENTER_TOLERANCE_PX
+            self._save_frame(
+                frame,
+                result,
+                segmentor,
+                hose_cx,
+                target_sphere_cx,
+                angle,
+                altitude,
+            )
 
-            if angle_ok and center_ok:
-                aligned_count += 1
-                yasmin.YASMIN_LOG_INFO(
-                    f"Aligned ({aligned_count}/{HOSE_ALIGN_CONFIRMATIONS}): "
-                    f"angle={angle:.1f}deg, cx_err={error_center:.0f}px"
-                )
-                if aligned_count >= HOSE_ALIGN_CONFIRMATIONS:
-                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+            if angle_ok and center_ok and anchor_ok:
+                aligned += 1
+                if aligned >= HOSE_ALIGN_CONFIRMATIONS:
+                    drone.move_velocity(
+                        0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY
+                    )
                     yasmin.YASMIN_LOG_INFO("Hose alignment complete.")
-
-                    if HOSE_OFFSET_DISTANCE > 0:
-                        yasmin.YASMIN_LOG_INFO(
-                            f"Shifting {HOSE_OFFSET_DISTANCE}m along hose..."
-                        )
-                        drone.move_to(
-                            x=HOSE_OFFSET_DISTANCE,
-                            reference=MoveReference.BODY,
-                            timeout=10.0,
-                            precision=0.2,
-                        )
-
                     return SUCCEED
             else:
-                aligned_count = 0
+                aligned = 0
 
-            vyaw = -self.pid_yaw.update(angle)
-            vy = self.pid_center.update(cx)
+            vx = self.pid_center.update(hose_cy)
+            vy = self.pid_anchor.update(err_anchor)
+            vyaw = self.pid_yaw.update(angle)
 
             drone.move_velocity(
-                vx=0.0, vy=vy, vz=0.0, vyaw=vyaw,
+                vx=vx,
+                vy=vy,
+                vz=0.0,
+                vyaw=vyaw,
                 reference=MoveReference.BODY,
             )
 
             if int(time.time()) % 2 == 0:
                 yasmin.YASMIN_LOG_INFO(
-                    f"Aligning: angle={angle:.1f}deg, cx_err={error_center:.0f}px, "
-                    f"vyaw={vyaw:.3f}, vy={vy:.3f}"
+                    f"Align: angle={angle:+.1f} hose_cy_err={err_center:+.0f} "
+                    f"anchor_err={err_anchor:+.0f} vx={vx:+.2f} vy={vy:+.2f} vyaw={vyaw:+.2f}"
                 )
 
             time.sleep(0.03)
 
-        drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+        drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
         yasmin.YASMIN_LOG_ERROR("Hose alignment timed out.")
         return ABORT
+
+    def _save_frame(
+        self, frame, result, segmentor, hose_cx, target_cx, angle, altitude
+    ):
+        if not (SAVE_DETECTIONS and self.save_dir and frame is not None and result):
+            return
+        self.frame_count += 1
+        if self.frame_count % 5 != 0:
+            return
+        annotated = segmentor.draw_segmentations(frame, result)
+        cv2.drawMarker(
+            annotated,
+            (int(hose_cx), IMAGE_CENTER_Y),
+            (0, 255, 0),
+            cv2.MARKER_CROSS,
+            30,
+            2,
+        )
+        cv2.drawMarker(
+            annotated,
+            (int(target_cx), IMAGE_CENTER_Y),
+            (0, 0, 255),
+            cv2.MARKER_TRIANGLE_UP,
+            30,
+            2,
+        )
+        alt_txt = f"{altitude:.2f}m" if altitude is not None else "n/a"
+        cv2.putText(
+            annotated,
+            f"alt={alt_txt} angle={angle:+.1f}",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 0),
+            2,
+        )
+        cv2.imwrite(str(self.save_dir / f"align_{self.frame_count:04d}.jpg"), annotated)
