@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'faulty_or_not = faulty_or_not.sm:main',
+            'rangefinder_node = faulty_or_not.rangefinder_node:main',
             'test_gauge_publisher = faulty_or_not.test_gauge_publisher:main',
             'test_cam = faulty_or_not.test_cam:main',
             'simtools = faulty_or_not.simtools:main',
