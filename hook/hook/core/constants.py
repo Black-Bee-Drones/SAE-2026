@@ -1,12 +1,14 @@
-from ament_index_python.packages import get_package_share_directory
+import math
 import os
 
+from ament_index_python.packages import get_package_share_directory
+
 # --- Altitude (meters) ---
-INITIAL_TAKEOFF_ALTITUDE = 3.5
+INITIAL_TAKEOFF_ALTITUDE = 4.0
 MAX_ASCEND_ALTITUDE = 6.8
 WORK_ALTITUDE = 3.0
 RELEASE_ALTITUDE = 2.0
-RTL_ALTITUDE = 4.0
+RTL_ALTITUDE = 2.7
 
 # --- Camera (Arducam 2MP IMX662, USB) ---
 # Specs: 1920x1080, FOV 102(D) x 86(H) x 47(V), EFL 3.9mm, F1.0
@@ -18,17 +20,27 @@ IMAGE_CENTER_Y = IMAGE_HEIGHT // 2
 HORIZONTAL_FOV_DEG = 86.0
 VERTICAL_FOV_DEG = 47.0
 
-# --- Camera-to-hook offset in body frame (meters) ---
-# Positive +x: hook forward of camera. Positive +y: hook left of camera.
-# Hook is mounted near drone center; camera ~5 cm forward of hook.
-CAMERA_TO_HOOK_BODY_X_M = -0.05
-CAMERA_TO_HOOK_BODY_Y_M = 0.0
+# Frame layout (FLU body): +x forward, +y left, +z up.
+#
+# CAMERA_BODY_OFFSET_*: camera position in body frame (meters from drone
+# center).
+# Used by states that reason about distance from the drone center to a
+# world point (e.g. APPROACH safety floor).
+#
+# CAMERA_TO_HOOK_BODY_*: hook position relative to the camera, in body
+# frame (= hook_body - camera_body). Used by perception.hook_image_offset
+# to project the hook into the image so the controller can park the HOOK
+# (not the camera) over the rope.
 
-# --- Target heights in world ---
+CAMERA_BODY_OFFSET_X_M = 0.05  # 5 cm forward of drone center
+CAMERA_BODY_OFFSET_Y_M = -0.03  # 3 cm to the right (-y)
+CAMERA_TO_HOOK_BODY_X_M = 0.00  # hook on the same +x line as camera
+CAMERA_TO_HOOK_BODY_Y_M = 0.10  # hook 10 cm to the left of camera
+
 # Used by px_per_meter to remove the parallax error
 SPHERE_HEIGHT_M = 1.7  # sphere mounted on hose at top of supports
 
-# --- Segmentation model ---
+# Segmentation model
 SEG_MODEL_PATH = os.path.join(
     get_package_share_directory("hook"),
     "models",
@@ -41,91 +53,134 @@ SPHERE_CLASS = "sphere"
 HOSE_CLASS = "rose"
 
 SPHERE_CONF = 0.70
-HOSE_CONF = 0.47
-# Per-class filter refines further; predict cutoff is the min of all classes.
+HOSE_CONF = 0.4
 SEG_PREDICT_CONF = min(SPHERE_CONF, HOSE_CONF)
 
-# --- Search and ascend (SEARCH_AND_ASCEND) ---
-ASCEND_VELOCITY = 0.4  # m/s upward while searching
+# Search and ascend
+ASCEND_VELOCITY = 0.3  # m/s upward while searching
 ASCENT_STOP_CONFIRMATIONS = 20
-ASCENT_TIMEOUT = 25.0  # seconds
+ASCENT_TIMEOUT = 60.0  # seconds
 
-# --- Approach sphere (APPROACH_SPHERE) ---
-APPROACH_TARGET_DISTANCE_M = (
-    0.6  # real-world horizontal distance to sphere when parked (radial)
-)
-APPROACH_MIN_SAFE_DISTANCE_M = (
-    0.50  # safety floor: never command motion that pushes closer
-)
-APPROACH_TOL_PX = 60  # error deadband: |err| < tol -> send 0 velocity
+# Approach sphere
+APPROACH_TARGET_DISTANCE_M = 0.72  # parked hook-to-sphere horizontal distance
+APPROACH_MIN_SAFE_DISTANCE_M = 0.50  # safety floor (never push closer)
+APPROACH_KP_M = 0.80  # m/s per m_error (same Kp on both axes)
+APPROACH_TOL_M = 0.10  # convergence band
 APPROACH_CONFIRMATIONS = 8  # consecutive frames inside tol to declare parked
-APPROACH_KP = 0.0015  # px error -> m/s (same Kp on both axes)
-APPROACH_MIN_OUTPUT_VELOCITY_XY = (
-    0.04  # output deadband: |v| below this -> send 0 (no noise)
-)
-APPROACH_MAX_VELOCITY_XY = 0.45  # symmetric clamp
-APPROACH_INIT_BEARING_FRAMES = 3  # median over first N detections to lock bearing
-APPROACH_MIN_INIT_DIST_PX = (
-    80  # if first detection is closer than this, skip bearing lock
-)
-APPROACH_DESCEND_VELOCITY = 0.2  # m/s descent during step 2
+APPROACH_MAX_VELOCITY_XY = 0.28
+APPROACH_INIT_BEARING_FRAMES = 3
+APPROACH_MIN_INIT_DIST_M = 0.12  # skip bearing lock if first sample closer than this
+APPROACH_DESCEND_VELOCITY = 0.2  # m/s downward during step 2
 APPROACH_TIMEOUT = 90  # seconds
 APPROACH_MAX_LOST_FRAMES = 50
 
-# --- Hose side selection (SELECT_HOSE_SIDE) ---
-SIDE_SAMPLE_FRAMES = 10
+# Hose side selection
+SIDE_SAMPLE_FRAMES = 20
 SIDE_LENGTH_RATIO = 1.4
-HOSE_SHIFT_VELOCITY = 0.2
-HOSE_SHIFT_DURATION = 1.5  # seconds
-SIDE_REACQUIRE_FRAMES = 5
-SIDE_TIMEOUT = 20.0
+SIDE_TIMEOUT = 30.0
 
-# --- Hose alignment (ALIGN_TO_HOSE) ---
-HOSE_MIN_CONTOUR_AREA = 200  # px²
+# Orient to hook — pre-rotate so the chosen rope is in front of the drone.
+ORIENT_BEHIND_THRESHOLD_M = 0.10  # rope body-x < -0.10m triggers the 180° flip
+ORIENT_BEHIND_SAMPLE_FRAMES = 8  # median-vote over this many frames before deciding
+ORIENT_YAW_KP = 0.6  # rad/s per rad of polar-angle error
+ORIENT_MAX_YAW_VELOCITY = (
+    0.42  # rad/s — well above HOSE_ANGLE_MAX_VELOCITY (0.28) for fast slew
+)
+ORIENT_ANGLE_TOLERANCE_RAD = math.radians(12.0)
+ORIENT_CONFIRMATIONS = 5
+ORIENT_TIMEOUT = 65.0  # seconds
+ORIENT_MAX_LOST_FRAMES = 60  # sphere-loss tolerance during the spin
+
+PPM_REF = IMAGE_WIDTH / (
+    2.0
+    * (WORK_ALTITUDE - SPHERE_HEIGHT_M)
+    * math.tan(math.radians(HORIZONTAL_FOV_DEG / 2.0))
+)
+
+PID_MIN_OUTPUT_VELOCITY_XY = 0.06  # m/s
+PID_MIN_OUTPUT_VYAW = 0.01  # rad/s
+
+HOSE_MIN_CONTOUR_AREA = 200  # px², minimum contour area to fit a hose pose
+
+# Hose alignment
 HOSE_ANGLE_TOLERANCE_DEG = 5.0
-HOSE_ANGLE_KP = 0.01  # rad/s per degree
-HOSE_ANGLE_MAX_VELOCITY = 0.4  # rad/s
-HOSE_CENTER_TOLERANCE_PX = 40
-HOSE_CENTER_KP = 0.001  # m/s per pixel
+HOSE_ANGLE_KP = 0.0098  # rad/s per degree
+HOSE_ANGLE_MAX_VELOCITY = 0.28  # rad/s
+HOSE_CENTER_TOLERANCE_M = 0.050
+HOSE_CENTER_KP = 0.80  # m/s per m
 HOSE_CENTER_MAX_VELOCITY = 0.25  # m/s
-HOSE_ALIGN_CONFIRMATIONS = 6
-HOSE_ALIGN_TIMEOUT = 30  # seconds
+HOSE_ALIGN_CONFIRMATIONS = 8
+HOSE_ALIGN_TIMEOUT = 100  # seconds
 HOSE_ALIGN_MAX_LOST_FRAMES = 60
 
 # Sphere anchor (along-hose) used in ALIGN_TO_HOSE and DESCEND_AND_ALIGN
-SPHERE_ANCHOR_DISTANCE_M = 0.6  # meters from sphere center along chosen hose direction
-SPHERE_ANCHOR_TOLERANCE_PX = 35
-SPHERE_ANCHOR_KP = 0.001  # m/s per pixel of sphere-y error -> vx
+SPHERE_ANCHOR_DISTANCE_M = 0.5  # meters from sphere center along chosen hose direction
+SPHERE_ANCHOR_TOLERANCE_M = 0.055
+SPHERE_ANCHOR_KP = 0.66  # m/s per m
 
-# --- Descent with alignment (DESCEND_AND_ALIGN) ---
-DESCEND_VELOCITY = 0.1  # m/s downward
-DESCEND_CENTER_KP = 0.0009
-DESCEND_ANGLE_KP = 0.008
-DESCEND_ANCHOR_KP = 0.0009
-DESCEND_MAX_VELOCITY_XY = 0.2
+# Rope held this far in front of the hook (body +x) during ALIGN. Keeps
+# the rope in the upper half of the image so the lidar (mounted aft of
+# the hook) never passes over the rope while yaw/lateral converge. DESCEND
+# linearly ramps this to 0 over DESCEND_STANDOFF_RAMP_SEC to avoid the
+# step-input dash forward that crossed the rope in earlier runs.
+ALIGN_STANDOFF_M = 0.30
+
+# Yaw-first sub-phase: while |rope_angle| > this, only command vyaw and hold
+# vx=vy=0. Prevents the position controllers from acting on hose_cy and
+# sphere_cx while the rope is still far from horizontal in the image (their
+# signals are geometrically meaningless until yaw is close to perpendicular).
+ALIGN_YAW_FIRST_TOLERANCE_DEG = 18.0
+
+# Vertical descent speed is proportional to altitude above RELEASE_ALTITUDE,
+# clamped to [DESCEND_VZ_MIN, DESCEND_VZ_MAX]. Hard zero at and below the
+# floor: the drone never descends past RELEASE_ALTITUDE regardless of
+# convergence state, so the hook cannot hit anything below the rope while
+# the lateral controllers are still settling. Lateral and yaw control
+# continue normally throughout.
+#   vz_command = -clip(DESCEND_VZ_KP * (alt - RELEASE_ALTITUDE),
+#                      DESCEND_VZ_MIN, DESCEND_VZ_MAX)
+DESCEND_VZ_KP = 0.20  # 1/s
+DESCEND_VZ_MIN = 0.05  # m/s near the floor
+DESCEND_VZ_MAX = 0.20  # m/s well above the floor
+DESCEND_CENTER_KP = 0.65  # m/s per m
+DESCEND_ANGLE_KP = 0.0088  # rad/s per degree
+DESCEND_ANCHOR_KP = 0.60  # m/s per m
+DESCEND_MAX_VELOCITY_XY = 0.22
 DESCEND_MAX_YAW_VELOCITY = 0.3
-DESCEND_CENTER_TOLERANCE_PX = 50
-DESCEND_ANGLE_TOLERANCE_DEG = 8.0
-DESCEND_ANCHOR_TOLERANCE_PX = 45
-DESCEND_RELEASE_CONFIRMATIONS = 4
-DESCEND_TIMEOUT = 45  # seconds
-DESCEND_MAX_LOST_FRAMES = 60
+DESCEND_CENTER_TOLERANCE_M = 0.07
+DESCEND_ANGLE_TOLERANCE_DEG = 5.0
+DESCEND_ANCHOR_TOLERANCE_M = 0.068  # ~45 px at WORK_ALTITUDE
+DESCEND_RELEASE_CONFIRMATIONS = 5
+DESCEND_TIMEOUT = 120  # seconds
+DESCEND_MAX_LOST_FRAMES = (
+    60  # counts ONLY hose losses; missing sphere is expected at low altitude
+)
 
-# --- Servo (hook release) ---
+# Linear ramp from ALIGN_STANDOFF_M to 0 over this many control ticks at
+# the start of DESCEND. Eliminates the ~200 px target step (~0.30 m at
+# WORK_ALTITUDE) that previously saturated vx and made the drone shoot
+# past the rope. Tick-counted (not wall-clock) so it survives slow YOLO
+# inference latency in SITL where each tick can take ~0.5 s.
+DESCEND_STANDOFF_RAMP_TICKS = 30
+
+# Sphere is the lateral anchor only while its target image-x is comfortably
+# inside the frame. As altitude drops, ppm grows and target_sphere_cx walks
+# off the image; below the cutoff the drone has already aligned, so we hold
+# vy=0 (FCU position-hold) and finish descent on hose-only references.
+DESCEND_SPHERE_TARGET_MARGIN_PX = 100
+
+# Servo
 SERVO_CHANNEL = 3
 HOLD_PWM = 1000.0
 RELEASE_PWM = 2000.0
 
-# --- Saving detections ---
+# Saving detections
 SAVE_DETECTIONS = True
 DETECTION_SAVE_PATH = os.path.expanduser("~/sae2026")
 
-# --- Simulation mode ---
+# Simulation mode
 SIM_MODE = os.environ.get("HOOK_SIM", "0") == "1"
 
-# Subscribe to the republished compressed topic; the launch file
-# (sae_hook.launch.py) runs an image_transport republish node that converts
-# /down_camera (raw) -> /down_camera/compressed.
 SIM_IMAGE_SOURCE = "/down_camera/compressed"
 SIM_IMAGE_COMPRESSED = True
 

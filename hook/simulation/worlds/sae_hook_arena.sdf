@@ -371,7 +371,7 @@
          Specs: 1920x1080, FOV 102(D) x 86(H) x 47(V), EFL 3.9mm, F1.0 -->
     <model name="down_camera">
       <static>false</static>
-      <pose relative_to="iris::iris_with_standoffs::base_link">0.03 0 -0.04 0 1.5708 0</pose>
+      <pose relative_to="iris::iris_with_standoffs::base_link">0.05 -0.03 -0.04 0 1.5708 0</pose>
       <link name="link">
         <inertial>
           <mass>0.03</mass>
@@ -415,7 +415,7 @@
     <!-- Downward lidar rangefinder (TFLuna) -->
     <model name="lidar_rangefinder">
       <static>false</static>
-      <pose relative_to="iris::iris_with_standoffs::base_link">-0.03 0 -0.05 0 1.5708 0</pose>
+      <pose relative_to="iris::iris_with_standoffs::base_link">-0.05 0 -0.05 0 1.5708 0</pose>
       <link name="link">
         <inertial>
           <mass>0.03</mass>
@@ -450,6 +450,37 @@
     <joint name="lidar_joint" type="fixed">
       <parent>iris::iris_with_standoffs::base_link</parent>
       <child>lidar_rangefinder::link</child>
+    </joint>
+
+    <!-- Hook visual placeholder. No collision; geometry only so the
+         down-camera image shows where the hook sits relative to the rope.
+         Pose is camera_offset + camera_to_hook = (+0.05, +0.07) in body. -->
+    <model name="hook_visual">
+      <static>false</static>
+      <pose relative_to="iris::iris_with_standoffs::base_link">0.05 0.07 -0.05 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.02</mass>
+          <inertia>
+            <ixx>1e-6</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>1e-6</iyy><iyz>0</iyz>
+            <izz>1e-6</izz>
+          </inertia>
+        </inertial>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.01</radius><length>0.06</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.85 0.1 0.1 1</ambient>
+            <diffuse>0.95 0.15 0.15 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <joint name="hook_visual_joint" type="fixed">
+      <parent>iris::iris_with_standoffs::base_link</parent>
+      <child>hook_visual::link</child>
     </joint>
 
   </world>

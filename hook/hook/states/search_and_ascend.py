@@ -14,6 +14,7 @@ from nectar.ai.segmentation import Segmentor
 from nectar.control import AltitudeSource, MavrosDrone, MoveReference
 from nectar.vision import ImageHandler
 
+from hook.core import overlay
 from hook.core.constants import (
     ASCEND_VELOCITY,
     ASCENT_STOP_CONFIRMATIONS,
@@ -69,13 +70,10 @@ class SearchAndAscend(State):
                 latest = sphere
                 drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
 
-                if SAVE_DETECTIONS and self.save_dir: # and self.frame_count % 3 == 0:
-                    annotated = segmentor.draw_segmentations(frame, result)
-                    cv2.imwrite(
-                        str(self.save_dir / f"sphere_{self.frame_count:04d}.jpg"),
-                        annotated,
-                    )
-                self.frame_count += 1
+                self._save_frame(
+                    frame, result, altitude, confirmations,
+                    sphere_center=sphere.center,
+                )
 
                 alt_txt = f"{altitude:.2f}m" if altitude is not None else "n/a"
                 yasmin.YASMIN_LOG_INFO(
@@ -96,6 +94,7 @@ class SearchAndAscend(State):
                 continue
 
             confirmations = 0
+            self._save_frame(frame, result, altitude, confirmations, sphere_center=None)
 
             if altitude is not None and altitude >= MAX_ASCEND_ALTITUDE:
                 drone.move_velocity(
@@ -107,10 +106,7 @@ class SearchAndAscend(State):
                 return ABORT
 
             drone.move_velocity(
-                vx=0.0,
-                vy=0.0,
-                vz=ASCEND_VELOCITY,
-                vyaw=0.0,
+                vx=0.0, vy=0.0, vz=ASCEND_VELOCITY, vyaw=0.0,
                 reference=MoveReference.BODY,
             )
             time.sleep(0.05)
@@ -120,3 +116,20 @@ class SearchAndAscend(State):
         )
         yasmin.YASMIN_LOG_ERROR("Search-and-ascend timed out.")
         return ABORT
+
+    def _save_frame(self, frame, result, altitude, confirmations, *, sphere_center):
+        if not (SAVE_DETECTIONS and self.save_dir and frame is not None):
+            return
+        annotated = overlay.annotate_seg(frame, result)
+        overlay.draw_search_ascend(
+            annotated,
+            altitude=altitude,
+            alt_max=MAX_ASCEND_ALTITUDE,
+            confirmations=confirmations,
+            target_confirmations=ASCENT_STOP_CONFIRMATIONS,
+            sphere_center=sphere_center,
+        )
+        self.frame_count += 1
+        cv2.imwrite(
+            str(self.save_dir / f"search_{self.frame_count:04d}.jpg"), annotated
+        )

@@ -34,7 +34,9 @@ from hook.core.constants import (
     SEG_IMGSZ,
     SEG_IOU,
     SEG_PREDICT_CONF,
+    SPHERE_ANCHOR_DISTANCE_M,
     SPHERE_CLASS,
+    SPHERE_HEIGHT_M,
 )
 
 
@@ -137,9 +139,7 @@ def hose_pose(
     )
 
 
-def px_per_meter(
-    altitude_m: Optional[float], target_height_m: float = 0.0
-) -> float:
+def px_per_meter(altitude_m: Optional[float], target_height_m: float = 0.0) -> float:
     """Pixel-per-meter at the depth `altitude_m - target_height_m`.
 
     The down camera sees a target at height `target_height_m` above ground
@@ -184,6 +184,49 @@ def approach_setpoint(
         IMAGE_CENTER_X + ux0 * target_px + hx,
         IMAGE_CENTER_Y + uy0 * target_px + hy,
     )
+
+
+def anchor_sign_for_side(side_image_unit: Tuple[float, float]) -> int:
+    """Sign of the sphere's image-x offset from the hook after the drone
+    yaws to the closest perpendicular and parks at SPHERE_ANCHOR_DISTANCE_M
+    from the sphere along the chosen hose direction.
+
+    After yaw convergence the side direction in image becomes
+    (sign(ux), 0). The sphere sits at -side direction from the hook, so
+    its image-x offset is `-sign(ux) * D * ppm`. Tie at `ux == 0`
+    defaults to +1.
+    """
+    return -1 if side_image_unit[0] > 0 else 1
+
+
+def alignment_targets(
+    side_image_unit: Tuple[float, float],
+    altitude_m: Optional[float],
+    standoff_m: float = 0.0,
+    target_height_m: float = SPHERE_HEIGHT_M,
+) -> Tuple[float, float, int]:
+    """Image-frame setpoints for the dual-anchor controller.
+
+    Returns ``(target_sphere_cx, target_hose_cy, anchor_sign)``.
+
+    - ``target_sphere_cx``: where the sphere centroid should sit when the
+      hook is parked SPHERE_ANCHOR_DISTANCE_M from the sphere along the
+      chosen hose direction.
+    - ``target_hose_cy``: where the hose centroid should sit. With
+      ``standoff_m=0`` the hook is directly over the rope (DESCEND).
+      With ``standoff_m>0`` the rope is held that many meters in front
+      of the hook in body frame (rope appears in the upper half of the
+      image), keeping the lidar (mounted aft of the hook) clear of the
+      rope during ALIGN.
+    - ``anchor_sign``: +1 if the sphere should appear right of the hook
+      in image, -1 if left.
+    """
+    ppm = px_per_meter(altitude_m, target_height_m)
+    hook_dx, hook_dy = hook_image_offset(altitude_m, target_height_m)
+    sign = anchor_sign_for_side(side_image_unit)
+    target_sphere_cx = IMAGE_CENTER_X + hook_dx + sign * SPHERE_ANCHOR_DISTANCE_M * ppm
+    target_hose_cy = IMAGE_CENTER_Y + hook_dy - standoff_m * ppm
+    return target_sphere_cx, target_hose_cy, sign
 
 
 def pick_hose_by_dir(

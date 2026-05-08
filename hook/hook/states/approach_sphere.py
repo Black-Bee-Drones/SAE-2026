@@ -2,9 +2,13 @@
 
 Setpoint is a single image-space point on the line from the camera nadir
 toward the sphere captured at the start of approach. The drone always
-parks on that line, APPROACH_TARGET_DISTANCE_M short of the sphere
+parks on that line, ``APPROACH_TARGET_DISTANCE_M`` short of the sphere
 (measured at the hook). The bearing is the only frozen quantity; the
 sphere position is re-detected every tick.
+
+PIDs feed on metric errors (``err_px / ppm``) so behavior is invariant
+to altitude across the descent from ``ascent_alt`` down to
+``WORK_ALTITUDE``. Same pattern as ALIGN/DESCEND.
 
 Image-to-body convention (down camera, FLU body):
   image -y -> body +x (forward)
@@ -26,27 +30,28 @@ from yasmin_ros.yasmin_node import YasminNode
 
 from nectar.ai.detection import PerClassConfidenceFilter
 from nectar.ai.segmentation import Segmentor
-from nectar.control import AltitudeSource, MavrosDrone, MoveReference
+from nectar.control import AltitudeSource, MavrosDrone, MoveReference, PIDController
 from nectar.vision import ImageHandler
 
+from hook.core import overlay
 from hook.core.constants import (
     APPROACH_CONFIRMATIONS,
     APPROACH_DESCEND_VELOCITY,
     APPROACH_INIT_BEARING_FRAMES,
-    APPROACH_KP,
+    APPROACH_KP_M,
     APPROACH_MAX_LOST_FRAMES,
     APPROACH_MAX_VELOCITY_XY,
-    APPROACH_MIN_INIT_DIST_PX,
-    APPROACH_MIN_OUTPUT_VELOCITY_XY,
+    APPROACH_MIN_INIT_DIST_M,
     APPROACH_MIN_SAFE_DISTANCE_M,
     APPROACH_TARGET_DISTANCE_M,
     APPROACH_TIMEOUT,
-    APPROACH_TOL_PX,
+    APPROACH_TOL_M,
     DETECTION_SAVE_PATH,
     IMAGE_CENTER_X,
     IMAGE_CENTER_Y,
     IMAGE_HEIGHT,
     IMAGE_WIDTH,
+    PID_MIN_OUTPUT_VELOCITY_XY,
     SAVE_DETECTIONS,
     SPHERE_HEIGHT_M,
     WORK_ALTITUDE,
@@ -59,10 +64,6 @@ from hook.core.perception import (
 )
 
 
-def _clamp(value: float, limit: float) -> float:
-    return max(-limit, min(limit, value))
-
-
 class ApproachSphere(State):
     """Move horizontally onto the line drone-base -> sphere, stopping
     APPROACH_TARGET_DISTANCE_M short, then descend to WORK_ALTITUDE on the
@@ -70,6 +71,8 @@ class ApproachSphere(State):
 
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
+        self.pid_x = None
+        self.pid_y = None
         self.save_dir = None
         self.frame_count = 0
 
@@ -78,6 +81,21 @@ class ApproachSphere(State):
         camera: ImageHandler = blackboard["camera"]
         segmentor: Segmentor = blackboard["segmentor"]
         class_filter: PerClassConfidenceFilter = blackboard["class_filter"]
+
+        if self.pid_x is None:
+            self.pid_x = PIDController(
+                kp=APPROACH_KP_M,
+                setpoint=0.0,
+                output_limits=(-APPROACH_MAX_VELOCITY_XY, APPROACH_MAX_VELOCITY_XY),
+                output_deadband=PID_MIN_OUTPUT_VELOCITY_XY,
+            )
+        if self.pid_y is None:
+            self.pid_y = PIDController(
+                kp=APPROACH_KP_M,
+                setpoint=0.0,
+                output_limits=(-APPROACH_MAX_VELOCITY_XY, APPROACH_MAX_VELOCITY_XY),
+                output_deadband=PID_MIN_OUTPUT_VELOCITY_XY,
+            )
 
         if SAVE_DETECTIONS:
             ts = (
@@ -88,7 +106,7 @@ class ApproachSphere(State):
             self.save_dir = Path(DETECTION_SAVE_PATH) / ts / "approach_sphere"
             self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        bearing = self._capture_initial_bearing(camera, segmentor, class_filter)
+        bearing = self._capture_initial_bearing(drone, camera, segmentor, class_filter)
         if bearing is None:
             yasmin.YASMIN_LOG_ERROR("Could not capture initial bearing.")
             return ABORT
@@ -106,22 +124,21 @@ class ApproachSphere(State):
             drone, camera, segmentor, class_filter, blackboard, bearing
         )
 
-    # ------------------------------------------------------------------
-    # Bearing capture
-    # ------------------------------------------------------------------
-
     def _capture_initial_bearing(
-        self, camera, segmentor, class_filter
+        self, drone, camera, segmentor, class_filter
     ) -> Optional[Tuple[float, float]]:
         """Median bearing over the first APPROACH_INIT_BEARING_FRAMES valid
-        detections. If the very first detection is closer than
-        APPROACH_MIN_INIT_DIST_PX, returns (0,0) -> drone is already over
-        the sphere; descent proceeds straight down. Returns None only if
-        no detection arrives within the timeout."""
+        detections. If the very first detection is already closer than
+        APPROACH_MIN_INIT_DIST_M (in real-world meters), returns (0,0) ->
+        drone is already over the sphere; descent proceeds straight down.
+        Returns None only if no detection arrives within the timeout."""
         samples = []
         deadline = time.time() + 5.0
         while len(samples) < APPROACH_INIT_BEARING_FRAMES and time.time() < deadline:
             rclpy.spin_once(YasminNode.get_instance(), timeout_sec=0.05)
+            altitude = drone.get_altitude(AltitudeSource.LIDAR)
+            if altitude is None:
+                altitude = drone.get_altitude(AltitudeSource.AUTO)
             _, result = run_seg(camera, segmentor, class_filter)
             sphere = best_sphere(result)
             if sphere is None:
@@ -130,9 +147,12 @@ class ApproachSphere(State):
             cx, cy = sphere.center
             dx = cx - IMAGE_CENTER_X
             dy = cy - IMAGE_CENTER_Y
-            if not samples and math.hypot(dx, dy) < APPROACH_MIN_INIT_DIST_PX:
+            ppm = px_per_meter(altitude, SPHERE_HEIGHT_M) if altitude else 0.0
+            dist_m = math.hypot(dx, dy) / ppm if ppm > 0 else math.inf
+            if not samples and dist_m < APPROACH_MIN_INIT_DIST_M:
                 yasmin.YASMIN_LOG_INFO(
-                    "Sphere already centered; skipping bearing lock."
+                    f"Sphere already over drone (dist={dist_m:.2f}m); "
+                    f"skipping bearing lock."
                 )
                 return (0.0, 0.0)
             samples.append((dx, dy))
@@ -148,28 +168,6 @@ class ApproachSphere(State):
         if norm < 1e-3:
             return (0.0, 0.0)
         return (dx_med / norm, dy_med / norm)
-
-    # ------------------------------------------------------------------
-    # Velocity step
-    # ------------------------------------------------------------------
-
-    def _step_velocity(self, ex: float, ey: float) -> Tuple[float, float]:
-        """Pure proportional control with two deadbands.
-
-        - Error deadband: if the image error is inside APPROACH_TOL_PX,
-          send (0, 0) so perception noise is not turned into commands.
-        - Output deadband: if the proportional output is below
-          APPROACH_MIN_OUTPUT_VELOCITY_XY, also send (0, 0). Avoids
-          shipping sub-noise commands to MAVROS.
-        """
-        err = math.hypot(ex, ey)
-        if err < APPROACH_TOL_PX:
-            return 0.0, 0.0
-        vx = -APPROACH_KP * ey
-        vy = -APPROACH_KP * ex
-        if math.hypot(vx, vy) < APPROACH_MIN_OUTPUT_VELOCITY_XY:
-            return 0.0, 0.0
-        return _clamp(vx, APPROACH_MAX_VELOCITY_XY), _clamp(vy, APPROACH_MAX_VELOCITY_XY)
 
     def _enforce_safety(
         self,
@@ -190,8 +188,6 @@ class ApproachSphere(State):
             return 0.0, 0.0
         if dist_px / ppm >= APPROACH_MIN_SAFE_DISTANCE_M:
             return vx, vy
-        # Body unit vector pointing toward the sphere from the camera nadir
-        # (image -y -> body +x, image +x -> body -y).
         bsx = -dy_img / dist_px
         bsy = -dx_img / dist_px
         v_toward = vx * bsx + vy * bsy
@@ -200,9 +196,21 @@ class ApproachSphere(State):
             vy -= v_toward * bsy
         return vx, vy
 
-    # ------------------------------------------------------------------
-    # Step 1: lateral approach
-    # ------------------------------------------------------------------
+    def _step_velocity(
+        self, ex_m: float, ey_m: float
+    ) -> Tuple[float, float]:
+        """Two metric PIDs feeding the body-frame velocities. The image
+        error mapping is `image -y -> body +x`, `image +x -> body -y`,
+        so vx is driven by -ey and vy by -ex.
+        """
+        err_m = math.hypot(ex_m, ey_m)
+        if err_m < APPROACH_TOL_M:
+            self.pid_x.reset()
+            self.pid_y.reset()
+            return 0.0, 0.0
+        vx = self.pid_x.update(ey_m)
+        vy = self.pid_y.update(ex_m)
+        return vx, vy
 
     def _lateral_approach(
         self, drone, camera, segmentor, class_filter, blackboard, bearing
@@ -241,44 +249,49 @@ class ApproachSphere(State):
                 bearing, target_px, altitude, SPHERE_HEIGHT_M
             )
 
-            ex = cx - target_x
-            ey = cy - target_y
-            err = math.hypot(ex, ey)
+            ex_px = cx - target_x
+            ey_px = cy - target_y
+            ex_m = ex_px / ppm if ppm > 0 else 0.0
+            ey_m = ey_px / ppm if ppm > 0 else 0.0
+            err_m = math.hypot(ex_m, ey_m)
 
-            if err < APPROACH_TOL_PX:
+            if err_m < APPROACH_TOL_M:
                 confirmed += 1
                 if confirmed >= APPROACH_CONFIRMATIONS:
                     drone.move_velocity(
-                        0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY, duration=1.0
+                        0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY, duration=2.5
                     )
                     blackboard["approach_image_offset"] = (
                         cx - IMAGE_CENTER_X,
                         cy - IMAGE_CENTER_Y,
                     )
                     yasmin.YASMIN_LOG_INFO(
-                        f"Approach reached: err={err:.0f}px target_px={target_px:.0f} "
+                        f"Approach reached: err={err_m:.3f}m ({err_m * ppm:.0f}px) "
                         f"sphere=({cx:.0f},{cy:.0f}) setpoint=({target_x:.0f},{target_y:.0f})"
                     )
                     return True
             else:
                 confirmed = 0
 
-            vx, vy = self._step_velocity(ex, ey)
+            vx, vy = self._step_velocity(ex_m, ey_m)
             vx, vy = self._enforce_safety(vx, vy, (cx, cy), ppm)
             drone.move_velocity(
                 vx=vx, vy=vy, vz=0.0, vyaw=0.0, reference=MoveReference.BODY,
             )
 
             self._save_overlay(
-                frame, result, segmentor, "approach",
-                bearing, (cx, cy), (target_x, target_y), (ex, ey), target_px, altitude,
+                frame, result, "approach",
+                bearing, (cx, cy), (target_x, target_y), (ex_px, ey_px),
+                target_px, altitude, vx, vy, 0.0,
             )
 
             now = time.time()
             if now - last_log > 0.5:
                 yasmin.YASMIN_LOG_INFO(
-                    f"Approach: err={err:.0f}px target_px={target_px:.0f} "
-                    f"ex={ex:+.0f} ey={ey:+.0f} vx={vx:+.2f} vy={vy:+.2f}"
+                    f"Approach alt={altitude:.2f}m | "
+                    f"err={err_m:+.3f}m ({err_m * ppm:.0f}px) "
+                    f"ex={ex_m:+.3f}m ey={ey_m:+.3f}m | "
+                    f"cmd: vx={vx:+.2f} vy={vy:+.2f}"
                 )
                 last_log = now
 
@@ -287,10 +300,6 @@ class ApproachSphere(State):
         drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
         yasmin.YASMIN_LOG_ERROR("Lateral approach timed out.")
         return False
-
-    # ------------------------------------------------------------------
-    # Step 2: descend keeping the same line
-    # ------------------------------------------------------------------
 
     def _descend_with_offset(
         self, drone, camera, segmentor, class_filter, blackboard, bearing
@@ -333,8 +342,9 @@ class ApproachSphere(State):
                     )
                     yasmin.YASMIN_LOG_ERROR("Lost sphere during descent.")
                     return ABORT
+                vz_blind = -APPROACH_DESCEND_VELOCITY if altitude > WORK_ALTITUDE else 0.0
                 drone.move_velocity(
-                    vx=0.0, vy=0.0, vz=-APPROACH_DESCEND_VELOCITY, vyaw=0.0,
+                    vx=0.0, vy=0.0, vz=vz_blind, vyaw=0.0,
                     reference=MoveReference.BODY,
                 )
                 time.sleep(0.05)
@@ -346,9 +356,11 @@ class ApproachSphere(State):
                 cx - IMAGE_CENTER_X,
                 cy - IMAGE_CENTER_Y,
             )
-            ex = cx - target_x
-            ey = cy - target_y
-            vx, vy = self._step_velocity(ex, ey)
+            ex_px = cx - target_x
+            ey_px = cy - target_y
+            ex_m = ex_px / ppm if ppm > 0 else 0.0
+            ey_m = ey_px / ppm if ppm > 0 else 0.0
+            vx, vy = self._step_velocity(ex_m, ey_m)
             vx, vy = self._enforce_safety(vx, vy, (cx, cy), ppm)
 
             drone.move_velocity(
@@ -357,16 +369,18 @@ class ApproachSphere(State):
             )
 
             self._save_overlay(
-                frame, result, segmentor, "descend",
-                bearing, (cx, cy), (target_x, target_y), (ex, ey), target_px, altitude,
+                frame, result, "descend",
+                bearing, (cx, cy), (target_x, target_y), (ex_px, ey_px),
+                target_px, altitude, vx, vy, -APPROACH_DESCEND_VELOCITY,
             )
 
             now = time.time()
             if now - last_log > 0.5:
-                err = math.hypot(ex, ey)
+                err_m = math.hypot(ex_m, ey_m)
                 yasmin.YASMIN_LOG_INFO(
-                    f"Descending: alt={altitude:.2f}m err={err:.0f}px "
-                    f"target_px={target_px:.0f}"
+                    f"Descending alt={altitude:.2f}m | "
+                    f"err={err_m:+.3f}m ({err_m * ppm:.0f}px) | "
+                    f"cmd: vx={vx:+.2f} vy={vy:+.2f} vz={-APPROACH_DESCEND_VELOCITY:+.2f}"
                 )
                 last_log = now
 
@@ -376,30 +390,24 @@ class ApproachSphere(State):
         yasmin.YASMIN_LOG_ERROR("Descent to work altitude timed out.")
         return ABORT
 
-    # ------------------------------------------------------------------
-    # Visualization
-    # ------------------------------------------------------------------
-
     def _save_overlay(
-        self, frame, result, segmentor, phase,
-        bearing, sphere_center, target, err, target_px, altitude,
+        self, frame, result, phase,
+        bearing, sphere_center, target, err_px, target_px, altitude,
+        vx, vy, vz,
     ):
         if not (SAVE_DETECTIONS and self.save_dir and frame is not None and result):
             return
-        self.frame_count += 1
-        annotated = segmentor.draw_segmentations(frame, result)
+        annotated = overlay.annotate_seg(frame, result)
         _draw_approach_overlay(
-            annotated, bearing, sphere_center, target, err, target_px, altitude,
+            annotated, bearing, sphere_center, target, err_px, target_px,
+            altitude, vx, vy, vz,
         )
+        self.frame_count += 1
         cv2.imwrite(
             str(self.save_dir / f"{phase}_{self.frame_count:04d}.jpg"),
             annotated,
         )
 
-
-# ----------------------------------------------------------------------
-# Overlay helper
-# ----------------------------------------------------------------------
 
 _CYAN = (255, 255, 0)
 _MAGENTA = (255, 0, 255)
@@ -413,29 +421,29 @@ def _draw_approach_overlay(
     bearing: Tuple[float, float],
     sphere_center: Tuple[float, float],
     target: Tuple[float, float],
-    err: Tuple[float, float],
+    err_px: Tuple[float, float],
     target_px: float,
     altitude: Optional[float],
+    vx: float,
+    vy: float,
+    vz: float,
 ):
     """Radial setpoint visualization (drone-centric).
 
-    Drone target = where the cyan + should sit when parked. With the radial
-    scheme, drone_target lies on the line from current camera nadir along
-    the captured bearing direction, at the position that puts the sphere
-    onto the bearing-aligned setpoint. Equivalently: drone_target =
-    image_center + err. As the drone moves and the live sphere detection
-    updates, drone_target moves; the controller stops when cyan + overlaps
-    the yellow circle.
+    drone_target = where the cyan + should sit when parked. With the
+    radial scheme this is image_center + err_px; the controller stops
+    when cyan + overlaps the yellow circle.
     """
     cx_img, cy_img = IMAGE_CENTER_X, IMAGE_CENTER_Y
     sx, sy = int(sphere_center[0]), int(sphere_center[1])
-    ex, ey = err
+    ex, ey = err_px
     dt_x = cx_img + int(ex)
     dt_y = cy_img + int(ey)
     ux, uy = bearing
 
     ppm = target_px / APPROACH_TARGET_DISTANCE_M if APPROACH_TARGET_DISTANCE_M > 0 else 0.0
     to_m = (lambda p: p / ppm) if ppm > 1e-3 else (lambda p: 0.0)
+    tol_px = max(int(APPROACH_TOL_M * ppm), 8) if ppm > 0 else 8
 
     cv2.drawMarker(img, (cx_img, cy_img), _CYAN, cv2.MARKER_CROSS, 30, 2)
     cv2.circle(img, (sx, sy), 8, _RED, -1)
@@ -459,19 +467,20 @@ def _draw_approach_overlay(
     diag_px = math.hypot(ex, ey)
     cv2.arrowedLine(img, (cx_img, cy_img), (dt_x, dt_y), _GREEN, 2, tipLength=0.15)
     cv2.putText(
-        img, f"err={diag_px:.0f}px ({to_m(diag_px):.2f}m)",
+        img, f"err={to_m(diag_px):.3f}m ({diag_px:.0f}px)",
         (int((cx_img + dt_x) / 2) + 10, int((cy_img + dt_y) / 2) - 10),
         cv2.FONT_HERSHEY_SIMPLEX, 0.6, _GREEN, 2,
     )
 
-    cv2.circle(img, (dt_x, dt_y), int(max(APPROACH_TOL_PX, 8)), _YELLOW, 2)
+    cv2.circle(img, (dt_x, dt_y), tol_px, _YELLOW, 2)
     cv2.drawMarker(img, (dt_x, dt_y), _YELLOW, cv2.MARKER_TILTED_CROSS, 18, 2)
 
     alt_txt = f"{altitude:.2f}m" if altitude is not None else "n/a"
     text_lines = [
-        f"alt={alt_txt}  D={APPROACH_TARGET_DISTANCE_M:.2f}m  target_px={target_px:.0f}  ppm={ppm:.0f}",
-        f"err={diag_px:.0f}px ({to_m(diag_px):.2f}m)  err_xy=({ex:+.0f},{ey:+.0f})",
+        f"alt={alt_txt}  D={APPROACH_TARGET_DISTANCE_M:.2f}m  ppm={ppm:.0f}",
+        f"err={to_m(diag_px):+.3f}m ({diag_px:.0f}px)  err_xy=({to_m(ex):+.3f}m,{to_m(ey):+.3f}m)",
         f"bearing=({ux:+.2f},{uy:+.2f})  drone_target=({dt_x},{dt_y})  sphere=({sx},{sy})",
+        f"cmd: vx={vx:+.2f}  vy={vy:+.2f}  vz={vz:+.2f}",
     ]
     for i, line in enumerate(text_lines):
         cv2.putText(
