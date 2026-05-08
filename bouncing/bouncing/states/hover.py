@@ -13,6 +13,7 @@ from bouncing.constants import (
     HOVER_DETECTIONS_LOST_TOLERANCE,
     HOVER_TIMEOUT,
     HOVER_ALING_TOLERANCE,
+    HOVER_ALING_COUNT_TO_SUCCEED,
     CONTROLER_P_XY,
     CONTROLER_I_XY,
     CONTROLER_D_XY,
@@ -72,7 +73,7 @@ class Hover(State):
             for n in result.filter_by_class([target_base['number']]):
                 valid_number = True
                 for s in result.filter_by_class(['0', '1', '2']):
-                    if (s.class_id == target_base['shape']):
+                    if (s.class_name == target_base['shape']):
                         if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
                             landing_bases.append(n)
 
@@ -87,17 +88,18 @@ class Hover(State):
             if landing_bases:
                 landing_base_number = max(
                     landing_bases,
-                    key=lambda l: l.confidence * l.area
+                    key=lambda l: l.confidence,
                 )
             elif numbers:
                 landing_base_number = max(
                     numbers,
-                    key=lambda n: n.confidence * n.area
+                    key=lambda n: n.confidence,
                 )
             else:
+                alignment_count = 0
                 lost_detection_count += 1
                 drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LANDING_DETECTIONS_LOST_TOLERANCE}).')
+                yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{HOVER_DETECTIONS_LOST_TOLERANCE}).')
 
                 if lost_detection_count >= HOVER_DETECTIONS_LOST_RESET_PID_TOLERANCE:
                     self.pid_x.reset()
@@ -113,7 +115,6 @@ class Hover(State):
             h, w = result.image.shape[:2]
             center = landing_base_number.center
 
-            # normalized error
             error_x = (center[1] - (h / 2)) / drone.get_altitude()
             error_y = (center[0] - (w / 2)) / drone.get_altitude()
 
@@ -123,16 +124,19 @@ class Hover(State):
             yasmin.YASMIN_LOG_INFO(f'Detection: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
 
             if (error_x ** 2 + error_y ** 2 <= HOVER_ALING_TOLERANCE ** 2):
-                drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                drone.delay(0.5)
-                return SUCCEED
-            else:
-                drone.move_velocity(
-                    vx = output_x,
-                    vy = output_y,
-                    vz = 0.0,
-                    vyaw = 0.0,
-                )
+                alignment_count += 1
+                if alignment_count >= HOVER_ALING_COUNT_TO_SUCCEED:
+                    yasmin.YASMIN_LOG_INFO('Successfully Aligned.')
+                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                    drone.delay(0.5)
+                    return SUCCEED
+
+            drone.move_velocity(
+                vx = output_x,
+                vy = output_y,
+                vz = 0.0,
+                vyaw = 0.0,
+            )
 
         yasmin.YASMIN_LOG_INFO('Timeout.')
         return TIMEOUT

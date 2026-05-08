@@ -84,7 +84,7 @@ class PreciseLanding(State):
             for n in result.filter_by_class([target_base['number']]):
                 valid_number = True
                 for s in result.filter_by_class(['0', '1', '2']):
-                    if (s.class_id == target_base['shape']):
+                    if (s.class_name == target_base['shape']):
                         if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
                             landing_bases.append(n)
 
@@ -99,12 +99,12 @@ class PreciseLanding(State):
             if landing_bases:
                 landing_base_number = max(
                     landing_bases,
-                    key=lambda l: l.confidence * l.area
+                    key=lambda l: l.confidence
                 )
             elif numbers:
                 landing_base_number = max(
                     numbers,
-                    key=lambda n: n.confidence * n.area
+                    key=lambda n: n.confidence
                 )
             else:
                 lost_detection_count += 1

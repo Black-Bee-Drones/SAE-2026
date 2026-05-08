@@ -21,7 +21,7 @@ class Bouncing(StateMachine):
 
         self.add_state(
             "INITIALIZE",
-            Initialize(start_target_base={'shape': '0', 'number': '5'}),
+            Initialize(start_target_base={'shape': '2', 'number': '4'}),
             transitions={SUCCEED:"TAKEOFF", ABORT:ABORT},
         )
         self.add_state(
