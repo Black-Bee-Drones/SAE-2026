@@ -9,7 +9,7 @@ from nectar.vision import ImageHandler
 
 from bouncing.constants import (
     SEARCH_NUMBER_DETECTIONS,
-    SEARCH_DETECTIONS_LOST_TOLERANCE,
+    SEARCH_FIND_TOLERANCE,
 )
 
 
@@ -27,96 +27,87 @@ class Search(State):
 
         yasmin.YASMIN_LOG_INFO('Start.')
 
-        target_base = {} # {shape, number}
-
+        target_base = {}
         count = 0
         for i in range(SEARCH_NUMBER_DETECTIONS):
             yasmin.YASMIN_LOG_INFO(f'Take and process photo {i+1}/{SEARCH_NUMBER_DETECTIONS}.')
             result = image_handler.take_photo()
 
-            # Search aruco number
-            find_arucos = []
-            for d in result.filter_by_class(['6']): # aruco detections
-                x1, y1, x2, y2 = d.bbox
-
-                h, w = result.image.shape[:2]
-
-                x1 = min(w, max(0, int(x1 - w / 2)))
-                y1 = min(h, max(0, int(y1 - h / 2)))
-                x2 = min(w, max(0, int(x2 + w / 2)))
-                y2 = min(h, max(0, int(y2 + h / 2)))
-
-                crop = result.image[y1:y2, x1:x2]
-
-                n = self.get_number_of_aruco(crop)
-
-                if not n:
-                    continue
-
-                if n % 3 == 0:
-                    find_arucos.append((d, 3))
-                elif n % 4 == 0:
-                    find_arucos.append((d, 4))
-                elif n % 5 == 0:
-                    find_arucos.append((d, 5))
-
-            if not find_arucos:
-                yasmin.YASMIN_LOG_ERROR('Aruco not found.')
+            aruco, number = self.get_target_number(result)
+            if aruco is None or number is None:
+                yasmin.YASMIN_LOG_ERROR('Target NOT found.')
                 count = 0
                 continue
-
-            aruco, number = max(find_arucos, key=lambda a: a[0].confidence)
             target_base['number'] = str(number)
-            yasmin.YASMIN_LOG_INFO(f'Aruco found. Target number: {target_base["number"]}.')
 
-            # Search aruco shape
-            aruco_shapes = []
-            for s in result.filter_by_class(['0', '1', '2']):  # all shapes
-                if (abs(aruco.center[0] - s.center[0]) <= s.width / 2) and (abs(aruco.center[1] - s.center[1]) <= s.height / 2):
-                    aruco_shapes.append(s)
-
-            if not aruco_shapes:
-                yasmin.YASMIN_LOG_ERROR('Shape of aruco not found.')
+            aruco_shape = self.get_aruco_shape(result, aruco)
+            if not aruco_shape:
+                yasmin.YASMIN_LOG_ERROR(f'Shape of aruco NOT found. Target number: {target_base["number"]}.')
                 count = 0
                 continue
-
-            aruco_shape = max(
-                aruco_shapes,
-                key=lambda shape: (shape.center[0] - aruco.center[0]) ** 2 + (shape.center[1] - aruco.center[1]) ** 2
-            )
 
             target_base['shape'] = aruco_shape.class_name
-            yasmin.YASMIN_LOG_INFO(f'Shape of aruco found. Target shape: {target_base["shape"]}.')
+            if blackboard['target_base'] != target_base:
+                yasmin.YASMIN_LOG_INFO(f'Target base: {target_base}.')
+                blackboard['target_base'] = target_base
+                count = 0
 
-            # Save target base on blackboard
-            blackboard['target_base'] = target_base
-
-            # Search Landing base
-            landing_bases = []
-            for s in result.filter_by_class([target_base['shape']]):  # all target shapes
-                for n in result.filter_by_class([target_base['number']]):  # all target numbers
-                    if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
-                        landing_bases.append((s, n))
-
-            if not landing_bases:
-                yasmin.YASMIN_LOG_ERROR('Target base found, but landing base not found.')
+            landing_base_number = self.get_landing_base_number(target_base, result)
+            if not landing_base_number:
+                yasmin.YASMIN_LOG_ERROR('Landing base NOT found.')
                 count = 0
                 continue
 
-            landing_bases_shape, landing_base_number = max(
-                landing_bases,
-                key=lambda l: l[0].confidence * l[1].confidence
-            )
-
-            yasmin.YASMIN_LOG_INFO(f'Landing base found.')
+            yasmin.YASMIN_LOG_INFO(f'Landing base found ({count}/{SEARCH_FIND_TOLERANCE}).')
             count += 1
 
-            if count >= SEARCH_DETECTIONS_LOST_TOLERANCE:
+            if count >= SEARCH_FIND_TOLERANCE:
                 yasmin.YASMIN_LOG_INFO('Completed successfully.')
                 return SUCCEED
 
         yasmin.YASMIN_LOG_ERROR('Target and/or landing base not found.')
         return FAIL
+
+    def get_aruco_shape(self, result, aruco):
+        aruco_shapes = []
+        for s in result.filter_by_class(['0', '1', '2']):  # all shapes
+            if (abs(aruco.center[0] - s.center[0]) <= s.width / 2) and (abs(aruco.center[1] - s.center[1]) <= s.height / 2):
+                aruco_shapes.append(s)
+
+        if aruco_shapes:
+            aruco_shape = max(
+                aruco_shapes,
+                key=lambda shape: (shape.center[0] - aruco.center[0]) ** 2 + (shape.center[1] - aruco.center[1]) ** 2
+            )
+            return aruco_shape
+        return None
+
+
+    def get_target_number(self, result):
+        for d in result.filter_by_class(['6']):
+            x1, y1, x2, y2 = d.bbox
+
+            h, w = result.image.shape[:2]
+
+            x1 = min(w, max(0, int(x1 - w / 2)))
+            y1 = min(h, max(0, int(y1 - h / 2)))
+            x2 = min(w, max(0, int(x2 + w / 2)))
+            y2 = min(h, max(0, int(y2 + h / 2)))
+
+            crop = result.image[y1:y2, x1:x2]
+
+            n = self.get_number_of_aruco(crop)
+
+            if not n:
+                return None
+
+            if n % 3 == 0:
+                return d, 3
+            elif n % 4 == 0:
+                return d, 4
+            elif n % 5 == 0:
+                return d, 5
+        return None, None
 
 
     def get_number_of_aruco(self, img):
@@ -142,5 +133,26 @@ class Search(State):
 
             if ids is not None:
                 return ids.flatten()
+
+        return None
+    
+    def get_landing_base_number(self, target_base, result):
+        area_img = result.image.shape[0] * result.image.shape[1]
+        landing_bases = []
+        for n in result.filter_by_class([target_base['number']]):
+            for s in result.filter_by_class(['0', '1', '2']):
+                if ((s.area / area_img) <= 0.6):
+                    continue
+
+                if (s.class_name == target_base['shape']):
+                    if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
+                        landing_bases.append(n)
+
+        if landing_bases:
+            landing_base_number = max(
+                landing_bases,
+                key=lambda l: l.confidence
+            )
+            return landing_base_number
 
         return None
