@@ -1,8 +1,5 @@
 import time
-from datetime import datetime
-from pathlib import Path
 
-import cv2
 import rclpy
 import yasmin
 from yasmin import Blackboard, State
@@ -19,10 +16,9 @@ from hook.core.constants import (
     ASCEND_VELOCITY,
     ASCENT_STOP_CONFIRMATIONS,
     ASCENT_TIMEOUT,
-    DETECTION_SAVE_PATH,
     MAX_ASCEND_ALTITUDE,
-    SAVE_DETECTIONS,
 )
+from hook.core.frame_sink import FrameSink, build_state_sink
 from hook.core.perception import best_sphere, run_seg
 
 
@@ -31,8 +27,7 @@ class SearchAndAscend(State):
 
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
-        self.save_dir = None
-        self.frame_count = 0
+        self.sink: FrameSink = None
 
     def execute(self, blackboard: Blackboard):
         drone: MavrosDrone = blackboard["drone"]
@@ -40,11 +35,7 @@ class SearchAndAscend(State):
         segmentor: Segmentor = blackboard["segmentor"]
         class_filter: PerClassConfidenceFilter = blackboard["class_filter"]
 
-        if SAVE_DETECTIONS:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            blackboard["mission_timestamp"] = timestamp
-            self.save_dir = Path(DETECTION_SAVE_PATH) / timestamp / "search_ascend"
-            self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.sink = build_state_sink(blackboard, "search_ascend")
 
         yasmin.YASMIN_LOG_INFO("Searching for sphere while ascending...")
 
@@ -118,7 +109,7 @@ class SearchAndAscend(State):
         return ABORT
 
     def _save_frame(self, frame, result, altitude, confirmations, *, sphere_center):
-        if not (SAVE_DETECTIONS and self.save_dir and frame is not None):
+        if frame is None:
             return
         annotated = overlay.annotate_seg(frame, result)
         overlay.draw_search_ascend(
@@ -129,7 +120,4 @@ class SearchAndAscend(State):
             target_confirmations=ASCENT_STOP_CONFIRMATIONS,
             sphere_center=sphere_center,
         )
-        self.frame_count += 1
-        cv2.imwrite(
-            str(self.save_dir / f"search_{self.frame_count:04d}.jpg"), annotated
-        )
+        self.sink.emit(annotated)

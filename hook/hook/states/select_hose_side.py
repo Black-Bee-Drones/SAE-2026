@@ -17,11 +17,8 @@ Algorithm:
 """
 
 import time
-from datetime import datetime
-from pathlib import Path
 from typing import Optional, Tuple
 
-import cv2
 import rclpy
 import yasmin
 from yasmin import Blackboard, State
@@ -34,14 +31,13 @@ from nectar.vision import ImageHandler
 
 from hook.core import overlay
 from hook.core.constants import (
-    DETECTION_SAVE_PATH,
     IMAGE_CENTER_X,
     IMAGE_CENTER_Y,
-    SAVE_DETECTIONS,
     SIDE_LENGTH_RATIO,
     SIDE_SAMPLE_FRAMES,
     SIDE_TIMEOUT,
 )
+from hook.core.frame_sink import FrameSink, build_state_sink
 from hook.core.perception import (
     anchor_sign_for_side,
     best_sphere,
@@ -54,8 +50,7 @@ from hook.core.perception import (
 class SelectHoseSide(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
-        self.save_dir = None
-        self.frame_count = 0
+        self.sink: FrameSink = None
 
     def execute(self, blackboard: Blackboard):
         camera: ImageHandler = blackboard["camera"]
@@ -67,14 +62,7 @@ class SelectHoseSide(State):
             else None
         )
 
-        if SAVE_DETECTIONS:
-            ts = (
-                blackboard["mission_timestamp"]
-                if "mission_timestamp" in blackboard
-                else datetime.now().strftime("%Y%m%d_%H%M%S")
-            )
-            self.save_dir = Path(DETECTION_SAVE_PATH) / ts / "select_side"
-            self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.sink = build_state_sink(blackboard, "select_side")
 
         side_unit = self._decide_side(camera, segmentor, class_filter, approach_offset)
         if side_unit is None:
@@ -168,7 +156,7 @@ class SelectHoseSide(State):
         return (sign * u_axis[0], sign * u_axis[1])
 
     def _save_frame(self, frame, result, **kwargs) -> None:
-        if not (SAVE_DETECTIONS and self.save_dir and frame is not None):
+        if frame is None:
             return
         annotated = overlay.annotate_seg(frame, result)
         overlay.draw_select_side(
@@ -177,5 +165,4 @@ class SelectHoseSide(State):
             image_center=(IMAGE_CENTER_X, IMAGE_CENTER_Y),
             **kwargs,
         )
-        self.frame_count += 1
-        cv2.imwrite(str(self.save_dir / f"select_{self.frame_count:04d}.jpg"), annotated)
+        self.sink.emit(annotated)

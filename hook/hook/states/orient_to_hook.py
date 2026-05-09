@@ -24,11 +24,8 @@ Image-to-body convention (down camera, FLU body):
 
 import math
 import time
-from datetime import datetime
-from pathlib import Path
 from typing import List, Optional, Tuple
 
-import cv2
 import rclpy
 import yasmin
 from yasmin import Blackboard, State
@@ -42,7 +39,6 @@ from nectar.vision import ImageHandler
 
 from hook.core import overlay
 from hook.core.constants import (
-    DETECTION_SAVE_PATH,
     IMAGE_CENTER_X,
     IMAGE_CENTER_Y,
     ORIENT_ANGLE_TOLERANCE_RAD,
@@ -54,8 +50,8 @@ from hook.core.constants import (
     ORIENT_TIMEOUT,
     ORIENT_YAW_KP,
     PID_MIN_OUTPUT_VYAW,
-    SAVE_DETECTIONS,
 )
+from hook.core.frame_sink import FrameSink, build_state_sink
 from hook.core.perception import (
     anchor_sign_for_side,
     best_sphere,
@@ -116,8 +112,7 @@ class OrientToHook(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.pid_yaw = None
-        self.save_dir = None
-        self.frame_count = 0
+        self.sink: FrameSink = None
 
     def execute(self, blackboard: Blackboard):
         drone: MavrosDrone = blackboard["drone"]
@@ -135,14 +130,7 @@ class OrientToHook(State):
                 output_deadband=PID_MIN_OUTPUT_VYAW,
             )
 
-        if SAVE_DETECTIONS:
-            ts = (
-                blackboard["mission_timestamp"]
-                if "mission_timestamp" in blackboard
-                else datetime.now().strftime("%Y%m%d_%H%M%S")
-            )
-            self.save_dir = Path(DETECTION_SAVE_PATH) / ts / "orient_to_hook"
-            self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.sink = build_state_sink(blackboard, "orient_to_hook")
 
         sample = self._sample_decision(camera, segmentor, class_filter, side_unit)
         if sample is None:
@@ -399,7 +387,7 @@ class OrientToHook(State):
         vyaw: float,
         sample_idx: Optional[int],
     ) -> None:
-        if not (SAVE_DETECTIONS and self.save_dir and frame is not None):
+        if frame is None:
             return
         annotated = overlay.annotate_seg(frame, result)
         overlay.draw_orient(
@@ -417,7 +405,4 @@ class OrientToHook(State):
             sample_idx=sample_idx,
             sample_total=ORIENT_SAMPLE_FRAMES,
         )
-        self.frame_count += 1
-        cv2.imwrite(
-            str(self.save_dir / f"orient_{self.frame_count:04d}.jpg"), annotated
-        )
+        self.sink.emit(annotated)

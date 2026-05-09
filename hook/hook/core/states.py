@@ -33,6 +33,7 @@ from hook.core.constants import (
     HOSE_CONF,
     SIM_MODE,
 )
+from hook.core.frame_sink import FramePublisher
 
 
 class Initialize(State):
@@ -98,6 +99,12 @@ class Initialize(State):
                 default_threshold=1.1,
             )
             yasmin.YASMIN_LOG_INFO("Segmentor + per-class filter ready.")
+
+            frame_publisher = FramePublisher(node)
+            blackboard["frame_publisher"] = frame_publisher
+            yasmin.YASMIN_LOG_INFO(
+                f"Mission frames will be published on {frame_publisher.topic}."
+            )
 
             yasmin.YASMIN_LOG_INFO("Initialization complete.")
             return SUCCEED

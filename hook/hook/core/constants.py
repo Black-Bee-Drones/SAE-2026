@@ -90,12 +90,12 @@ ORIENT_SAMPLE_FRAMES = 6
 ORIENT_SKIP_THRESHOLD_RAD = math.radians(5.0)
 ORIENT_YAW_KP = 0.6  # rad/s per rad of polar-angle error
 ORIENT_MAX_YAW_VELOCITY = (
-    0.42  # rad/s — well above HOSE_ANGLE_MAX_VELOCITY (0.28) for fast slew
+    0.42  
 )
 ORIENT_ANGLE_TOLERANCE_RAD = math.radians(12.0)
 ORIENT_CONFIRMATIONS = 5
 ORIENT_TIMEOUT = 65.0  # seconds
-ORIENT_MAX_LOST_FRAMES = 60  # sphere-loss tolerance during the spin
+ORIENT_MAX_LOST_FRAMES = 65  # sphere-loss tolerance during the spin
 
 PPM_REF = IMAGE_WIDTH / (
     2.0
@@ -133,7 +133,7 @@ SPHERE_ANCHOR_KP = 0.66  # m/s per m
 # the hook) never passes over the rope while yaw/lateral converge. DESCEND
 # linearly ramps this to 0 over DESCEND_STANDOFF_RAMP_SEC to avoid the
 # step-input dash forward that crossed the rope in earlier runs.
-ALIGN_STANDOFF_M = 0.30
+ALIGN_STANDOFF_M = 0.35
 
 # Yaw-first sub-phase: while |rope_angle| > this, only command vyaw and hold
 # vx=vy=0. Prevents the position controllers from acting on hose_cy and
@@ -142,25 +142,18 @@ ALIGN_STANDOFF_M = 0.30
 ALIGN_YAW_FIRST_TOLERANCE_DEG = 18.0
 
 # Vertical descent speed is proportional to altitude above RELEASE_ALTITUDE,
-# clamped to [DESCEND_VZ_MIN, DESCEND_VZ_MAX]. Hard zero at and below the
-# floor: the drone never descends past RELEASE_ALTITUDE regardless of
-# convergence state, so the hook cannot hit anything below the rope while
-# the lateral controllers are still settling. Lateral and yaw control
-# continue normally throughout (LOWER_AND_ALIGN reuses the same
-# HOSE_*/SPHERE_ANCHOR_* gains in both align and descend phases).
 #   vz_command = -clip(DESCEND_VZ_KP * (alt - RELEASE_ALTITUDE),
 #                      DESCEND_VZ_MIN, DESCEND_VZ_MAX)
-DESCEND_VZ_KP = 0.20  # 1/s
-DESCEND_VZ_MIN = 0.05  # m/s near the floor
-DESCEND_VZ_MAX = 0.20  # m/s well above the floor
+DESCEND_VZ_KP = 0.20  
+DESCEND_VZ_MIN = 0.05  
+DESCEND_VZ_MAX = 0.20  
 DESCEND_RELEASE_CONFIRMATIONS = 5
 DESCEND_TIMEOUT = 120  # seconds
 
 # Linear ramp from ALIGN_STANDOFF_M to 0 over this many control ticks at
 # the start of DESCEND. Eliminates the ~200 px target step (~0.30 m at
 # WORK_ALTITUDE) that previously saturated vx and made the drone shoot
-# past the rope. Tick-counted (not wall-clock) so it survives slow YOLO
-# inference latency in SITL where each tick can take ~0.5 s.
+# past the rope. Tick-counted (not wall-clock) 
 DESCEND_STANDOFF_RAMP_TICKS = 30
 
 # Sphere is the lateral anchor only while its target image-x is comfortably
@@ -177,6 +170,10 @@ RELEASE_PWM = 2000.0
 # Saving detections
 SAVE_DETECTIONS = True
 DETECTION_SAVE_PATH = os.path.expanduser("~/sae2026")
+
+# Live mission monitoring
+MISSION_FRAME_TOPIC = "/hook/mission/image/compressed"
+MISSION_FRAME_JPEG_QUALITY = 80
 
 # Simulation mode
 SIM_MODE = os.environ.get("HOOK_SIM", "0") == "1"

@@ -17,8 +17,6 @@ Image-to-body convention (down camera, FLU body):
 
 import math
 import time
-from datetime import datetime
-from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
@@ -46,16 +44,15 @@ from hook.core.constants import (
     APPROACH_TARGET_DISTANCE_M,
     APPROACH_TIMEOUT,
     APPROACH_TOL_M,
-    DETECTION_SAVE_PATH,
     IMAGE_CENTER_X,
     IMAGE_CENTER_Y,
     IMAGE_HEIGHT,
     IMAGE_WIDTH,
     PID_MIN_OUTPUT_VELOCITY_XY,
-    SAVE_DETECTIONS,
     SPHERE_HEIGHT_M,
     WORK_ALTITUDE,
 )
+from hook.core.frame_sink import FrameSink, build_state_sink
 from hook.core.perception import (
     approach_setpoint,
     best_sphere,
@@ -73,8 +70,7 @@ class ApproachSphere(State):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.pid_x = None
         self.pid_y = None
-        self.save_dir = None
-        self.frame_count = 0
+        self.sink: FrameSink = None
 
     def execute(self, blackboard: Blackboard):
         drone: MavrosDrone = blackboard["drone"]
@@ -97,14 +93,7 @@ class ApproachSphere(State):
                 output_deadband=PID_MIN_OUTPUT_VELOCITY_XY,
             )
 
-        if SAVE_DETECTIONS:
-            ts = (
-                blackboard["mission_timestamp"]
-                if "mission_timestamp" in blackboard
-                else datetime.now().strftime("%Y%m%d_%H%M%S")
-            )
-            self.save_dir = Path(DETECTION_SAVE_PATH) / ts / "approach_sphere"
-            self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.sink = build_state_sink(blackboard, "approach_sphere")
 
         bearing = self._capture_initial_bearing(drone, camera, segmentor, class_filter)
         if bearing is None:
@@ -280,7 +269,7 @@ class ApproachSphere(State):
             )
 
             self._save_overlay(
-                frame, result, "approach",
+                frame, result,
                 bearing, (cx, cy), (target_x, target_y), (ex_px, ey_px),
                 target_px, altitude, vx, vy, 0.0,
             )
@@ -369,7 +358,7 @@ class ApproachSphere(State):
             )
 
             self._save_overlay(
-                frame, result, "descend",
+                frame, result,
                 bearing, (cx, cy), (target_x, target_y), (ex_px, ey_px),
                 target_px, altitude, vx, vy, -APPROACH_DESCEND_VELOCITY,
             )
@@ -391,22 +380,18 @@ class ApproachSphere(State):
         return ABORT
 
     def _save_overlay(
-        self, frame, result, phase,
+        self, frame, result,
         bearing, sphere_center, target, err_px, target_px, altitude,
         vx, vy, vz,
     ):
-        if not (SAVE_DETECTIONS and self.save_dir and frame is not None and result):
+        if frame is None or not result:
             return
         annotated = overlay.annotate_seg(frame, result)
         _draw_approach_overlay(
             annotated, bearing, sphere_center, target, err_px, target_px,
             altitude, vx, vy, vz,
         )
-        self.frame_count += 1
-        cv2.imwrite(
-            str(self.save_dir / f"{phase}_{self.frame_count:04d}.jpg"),
-            annotated,
-        )
+        self.sink.emit(annotated)
 
 
 _CYAN = (255, 255, 0)

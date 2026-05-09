@@ -330,6 +330,29 @@ Every saved frame uses the shared composite drawers in
 Frames are saved every tick (no skipping) under
 `DETECTION_SAVE_PATH/<ts>/<state>/`.
 
+## Live mission monitoring
+
+Every state's annotated frame (the same image written to disk) is also
+published on a single compressed-image topic:
+
+```bash
+ros2 run rqt_image_view rqt_image_view /hook/mission/image
+ros2 topic hz /hook/mission/image/compressed
+```
+
+Topic + JPEG quality are configured in
+[hook/core/constants.py](hook/core/constants.py)
+(`MISSION_FRAME_TOPIC`, `MISSION_FRAME_JPEG_QUALITY`). The publisher is
+created once in `INITIALIZE` and shared across all states via the
+blackboard. JPEG-encode is skipped while no subscriber is connected so
+the publisher costs near zero CPU during normal flight. QoS is
+best-effort / depth=1 (live monitoring, not a reliable record — disk
+saves remain authoritative).
+
+The shared output object is [`FrameSink`](hook/core/frame_sink.py): each
+state creates one with its own ``prefix`` and calls ``sink.emit(frame)``,
+which does both ``cv2.imwrite`` and ``publisher.publish``.
+
 ## Mission entry point
 
 `ros2 run hook mangalarga` parses an argparse CLI on `sys.argv` (after

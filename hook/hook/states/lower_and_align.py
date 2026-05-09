@@ -33,11 +33,8 @@ Wiring (image-to-body: ``image -y -> body +x``, ``image +x -> body -y``):
 """
 
 import time
-from datetime import datetime
-from pathlib import Path
 from typing import Tuple
 
-import cv2
 import rclpy
 import yasmin
 from yasmin import Blackboard, State
@@ -60,7 +57,6 @@ from hook.core.constants import (
     DESCEND_VZ_KP,
     DESCEND_VZ_MAX,
     DESCEND_VZ_MIN,
-    DETECTION_SAVE_PATH,
     HOSE_ALIGN_CONFIRMATIONS,
     HOSE_ALIGN_TIMEOUT,
     HOSE_ANGLE_KP,
@@ -76,12 +72,12 @@ from hook.core.constants import (
     PID_MIN_OUTPUT_VELOCITY_XY,
     PID_MIN_OUTPUT_VYAW,
     RELEASE_ALTITUDE,
-    SAVE_DETECTIONS,
     SPHERE_ANCHOR_KP,
     SPHERE_ANCHOR_TOLERANCE_M,
     SPHERE_HEIGHT_M,
     WORK_ALTITUDE,
 )
+from hook.core.frame_sink import FrameSink, build_state_sink
 from hook.core.perception import (
     alignment_targets,
     best_sphere,
@@ -112,8 +108,7 @@ class LowerAndAlign(State):
         self.pid_yaw = None
         self.pid_center = None
         self.pid_anchor = None
-        self.save_dir = None
-        self.frame_count = 0
+        self.sink: FrameSink = None
 
     def execute(self, blackboard: Blackboard):
         drone: MavrosDrone = blackboard["drone"]
@@ -124,15 +119,7 @@ class LowerAndAlign(State):
         anchor_sign: int = blackboard["anchor_sign"]
 
         self._build_pids()
-
-        if SAVE_DETECTIONS:
-            ts = (
-                blackboard["mission_timestamp"]
-                if "mission_timestamp" in blackboard
-                else datetime.now().strftime("%Y%m%d_%H%M%S")
-            )
-            self.save_dir = Path(DETECTION_SAVE_PATH) / ts / "lower_and_align"
-            self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.sink = build_state_sink(blackboard, "lower_and_align")
 
         yasmin.YASMIN_LOG_INFO(
             f"LowerAndAlign: standoff={ALIGN_STANDOFF_M:.2f}m anchor_sign={anchor_sign:+d} "
@@ -378,7 +365,7 @@ class LowerAndAlign(State):
             )
 
     def _save_frame(self, *, frame, result, **kwargs) -> None:
-        if not (SAVE_DETECTIONS and self.save_dir and frame is not None):
+        if frame is None:
             return
         annotated = overlay.annotate_seg(frame, result)
         overlay.draw_lower_and_align(
@@ -391,7 +378,4 @@ class LowerAndAlign(State):
             release_alt=RELEASE_ALTITUDE,
             **kwargs,
         )
-        self.frame_count += 1
-        cv2.imwrite(
-            str(self.save_dir / f"lower_{self.frame_count:04d}.jpg"), annotated
-        )
+        self.sink.emit(annotated)
