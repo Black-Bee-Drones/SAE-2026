@@ -27,9 +27,16 @@ does NOT abort. Only chosen-rope loss for ``LOWER_MAX_LOST_FRAMES``
 consecutive frames aborts.
 
 Wiring (image-to-body: ``image -y -> body +x``, ``image +x -> body -y``):
-    vx   <- pid_center.update((hose_cy - target_hose_cy) / ppm)
-    vy   <- pid_anchor.update((sphere_cx - target_sphere_cx) / ppm)
+    vx   <- pid_center.update((hose_cy - target_hose_cy) / ppm_y)
+    vy   <- pid_anchor.update((sphere_cx - target_sphere_cx) / ppm_x)
     vyaw <- pid_yaw.update(angle_deg)
+
+The two ``ppm`` factors come from the camera's anisotropic FOV (the
+wide-angle lens spec gives different focal lengths in x and y). image-y
+errors live on body +x (forward), so they convert with ``ppm_y``;
+image-x errors live on body -y (right), so they convert with ``ppm_x``.
+See :func:`hook.core.perception.px_per_meter_x` /
+:func:`hook.core.perception.px_per_meter_y` for the derivation.
 """
 
 import time
@@ -85,7 +92,8 @@ from hook.core.perception import (
     hose_pose,
     hose_segments,
     pick_hose_by_dir,
-    px_per_meter,
+    px_per_meter_x,
+    px_per_meter_y,
     run_seg,
 )
 
@@ -194,7 +202,8 @@ class LowerAndAlign(State):
             hose_lost = 0
             _, hose_cy, angle, _, _ = pose
 
-            ppm = px_per_meter(altitude, SPHERE_HEIGHT_M)
+            ppm_x = px_per_meter_x(altitude, SPHERE_HEIGHT_M)
+            ppm_y = px_per_meter_y(altitude, SPHERE_HEIGHT_M)
             hook_dx, hook_dy = hook_image_offset(altitude, SPHERE_HEIGHT_M)
 
             if phase == "descend":
@@ -216,12 +225,12 @@ class LowerAndAlign(State):
             sphere_can_anchor = sphere is not None and target_in_frame
 
             err_center_px = hose_cy - target_hose_cy
-            err_center_m = err_center_px / ppm if ppm > 0 else 0.0
+            err_center_m = err_center_px / ppm_y if ppm_y > 0 else 0.0
             err_angle = angle
             sphere_xy = sphere.center if sphere is not None else None
             if sphere_can_anchor:
                 err_anchor_px = sphere_xy[0] - target_sphere_cx
-                err_anchor_m = err_anchor_px / ppm if ppm > 0 else 0.0
+                err_anchor_m = err_anchor_px / ppm_x if ppm_x > 0 else 0.0
                 anchor_ok = abs(err_anchor_m) < SPHERE_ANCHOR_TOLERANCE_M
             else:
                 err_anchor_px = 0.0
@@ -277,7 +286,8 @@ class LowerAndAlign(State):
                 sphere_center=sphere_xy,
                 target_sphere_xy=(target_sphere_cx, target_hose_cy),
                 target_hose_cy=target_hose_cy,
-                ppm=ppm,
+                ppm_x=ppm_x,
+                ppm_y=ppm_y,
                 anchor_sign=anchor_sign,
                 phase=phase_label,
                 sphere_can_anchor=sphere_can_anchor,

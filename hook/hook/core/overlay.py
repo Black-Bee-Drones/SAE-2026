@@ -349,7 +349,8 @@ def draw_lower_and_align(
     target_hose_cy: float,
     tol_center_m: float,
     tol_anchor_m: float,
-    ppm: float,
+    ppm_x: float,
+    ppm_y: float,
     anchor_sign: int,
     phase: str,
     sphere_can_anchor: bool,
@@ -374,12 +375,15 @@ def draw_lower_and_align(
     target sphere ring, target hose row, error arrows) plus a left HUD
     with phase / altitude / errors / commanded velocities and a right
     HUD with anchor sign / standoff / tolerances. Includes the altitude
-    bar (with release marker) used during the descent sub-phase; during
-    the yaw / align sub-phases the bar still shows the live altitude.
+    bar (with release marker).
+
+    Anisotropic px↔m: the hose-row tolerance band uses ``ppm_y`` (image-y
+    is the body-x error axis); the sphere-anchor tolerance ring uses
+    ``ppm_x`` (image-x is the body-y error axis).
     """
     _, W = img.shape[:2]
-    tol_center_px = max(tol_center_m * ppm, 1.0)
-    tol_anchor_px = max(tol_anchor_m * ppm, 1.0)
+    tol_center_px = max(tol_center_m * ppm_y, 1.0)
+    tol_anchor_px = max(tol_anchor_m * ppm_x, 1.0)
 
     _draw_target_hose_row(img, target_hose_cy, tol_center_px, W)
     _draw_target_sphere(img, target_sphere_xy, tol_anchor_px, in_fov=sphere_can_anchor)
@@ -407,7 +411,8 @@ def draw_lower_and_align(
     draw_hud(
         img,
         [
-            f"LOWER_AND_ALIGN[{phase:>7s}]  alt={alt_txt}  ppm={ppm:5.0f}",
+            f"LOWER_AND_ALIGN[{phase:>7s}]  alt={alt_txt}  "
+            f"ppm_x={ppm_x:4.0f} ppm_y={ppm_y:4.0f}",
             f"anchor: {anchor_state}",
             f"err: hose_cy={err_center_m:+.3f}m ({err_center_px:+5.0f}px)",
             f"     anchor  ={err_anchor_m:+.3f}m ({err_anchor_px:+5.0f}px)",
@@ -460,63 +465,28 @@ def draw_orient(
     sphere_xy: Optional[Tuple[float, float]],
     hose_pose: Optional[Tuple[float, float, float, float, Tuple[float, float]]],
     delta_target: Optional[float],
-    theta_current: Optional[float],
-    theta_target: Optional[float],
     err_rad: Optional[float],
     tol_rad: float,
     vyaw: float,
     sample_idx: Optional[int],
     sample_total: int,
 ) -> None:
-    """ORIENT composite overlay.
+    """ORIENT composite overlay (modifies ``img`` in place).
 
     Draws the image center, the live sphere centroid, the chosen rope
-    axis (when available), a dashed yellow ray to ``theta_target`` (the
-    sphere's predicted post-rotation polar angle around image center), a
-    magenta ray to ``theta_current``, and HUDs with the sample/spin
-    status, the per-frame predicted ``delta_target`` (sample phase) or
-    the live polar-angle error (spin phase), and commanded ``vyaw``.
-    Modifies ``img`` in place.
-    """
-    H, W = img.shape[:2]
-    cx_img, cy_img = image_center
-    ray_len = int(min(W, H) * 0.35)
+    axis (when available), and a HUD with the sample/spin status, the
+    per-frame predicted body-yaw ``delta_target`` (sample phase) or the
+    live body-yaw error ``err_rad`` (spin phase), and commanded ``vyaw``.
 
+    The spin loop runs in **body frame** (the cumulative body yaw is
+    computed from the sphere's body-frame polar angle), so this overlay
+    no longer renders an image-frame target ray — that quantity is
+    anisotropy-dependent and would be misleading. The chosen-rope axis
+    line is the most direct visual cue: convergence = horizontal in
+    image AND sphere in upper half.
+    """
     if hose_pose is not None:
         _draw_hose_axis(img, hose_pose)
-
-    if theta_target is not None:
-        tx = int(cx_img + math.cos(theta_target) * ray_len)
-        ty = int(cy_img + math.sin(theta_target) * ray_len)
-        draw_dashed_line(
-            img,
-            (cx_img, cy_img),
-            (tx, ty),
-            COLOR_TARGET_SPHERE,
-            thickness=2,
-            dash=18,
-            gap=10,
-        )
-        cv2.drawMarker(
-            img,
-            (tx, ty),
-            COLOR_TARGET_SPHERE,
-            cv2.MARKER_TILTED_CROSS,
-            22,
-            2,
-        )
-
-    if theta_current is not None:
-        cx_ray = int(cx_img + math.cos(theta_current) * ray_len)
-        cy_ray = int(cy_img + math.sin(theta_current) * ray_len)
-        cv2.line(
-            img,
-            (cx_img, cy_img),
-            (cx_ray, cy_ray),
-            COLOR_HOOK,
-            2,
-            cv2.LINE_AA,
-        )
 
     if sphere_xy is not None:
         _draw_sphere(img, sphere_xy)
@@ -524,17 +494,9 @@ def draw_orient(
     _draw_image_center(img, image_center)
 
     if delta_target is None:
-        delta_str = "delta     =  n/a"
+        delta_str = "delta_tgt =  n/a"
     else:
-        delta_str = f"delta     ={math.degrees(delta_target):+6.1f}deg"
-    if theta_current is None:
-        theta_curr_str = "theta_curr=  n/a"
-    else:
-        theta_curr_str = f"theta_curr={math.degrees(theta_current):+6.1f}deg"
-    if theta_target is None:
-        theta_tgt_str = "theta_tgt =  n/a"
-    else:
-        theta_tgt_str = f"theta_tgt ={math.degrees(theta_target):+6.1f}deg"
+        delta_str = f"delta_tgt ={math.degrees(delta_target):+6.1f}deg (body)"
     if err_rad is None:
         err_str = "err       =  n/a"
     else:
@@ -557,8 +519,7 @@ def draw_orient(
     else:
         lines = [
             f"ORIENT[{phase}]  {sample_str}",
-            theta_curr_str,
-            theta_tgt_str,
+            delta_str,
             err_str,
             f"cmd: vyaw={vyaw:+.2f}",
         ]

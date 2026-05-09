@@ -3,6 +3,15 @@
 Image-to-body axis convention (down camera, body FLU):
     image -y (up)    -> body +x (forward)
     image +x (right) -> body -y (right)
+
+Pixels-per-meter is **anisotropic**: ``HORIZONTAL_FOV_DEG`` and
+``IMAGE_WIDTH`` give the rate for image-x ↔ body-y conversions, and
+``VERTICAL_FOV_DEG`` and ``IMAGE_HEIGHT`` give the rate for image-y ↔
+body-x conversions. The two values disagree because the IMX662 wide-angle
+lens does not satisfy a single-focal-length pinhole at the corners; the
+advertised FOVs are corner-to-corner. We use one ppm per axis as the
+internally-consistent approximation a-la-pinhole-near-the-center, until
+a real intrinsic calibration is available.
 """
 
 from __future__ import annotations
@@ -30,6 +39,7 @@ from hook.core.constants import (
     HOSE_MIN_CONTOUR_AREA,
     IMAGE_CENTER_X,
     IMAGE_CENTER_Y,
+    IMAGE_HEIGHT,
     IMAGE_WIDTH,
     SEG_IMGSZ,
     SEG_IOU,
@@ -37,6 +47,7 @@ from hook.core.constants import (
     SPHERE_ANCHOR_DISTANCE_M,
     SPHERE_CLASS,
     SPHERE_HEIGHT_M,
+    VERTICAL_FOV_DEG,
 )
 
 
@@ -139,12 +150,18 @@ def hose_pose(
     )
 
 
-def px_per_meter(altitude_m: Optional[float], target_height_m: float = 0.0) -> float:
-    """Pixel-per-meter at the depth `altitude_m - target_height_m`.
+def px_per_meter_x(
+    altitude_m: Optional[float], target_height_m: float = 0.0
+) -> float:
+    """Pixels per meter along **image-x** (== body-y in down-camera FLU).
 
-    The down camera sees a target at height `target_height_m` above ground
-    as if the camera were at altitude `altitude_m - target_height_m` looking
-    at the ground. Default 0 keeps the legacy ground-projection behaviour.
+    Derived from ``HORIZONTAL_FOV_DEG`` and ``IMAGE_WIDTH``. Use this
+    factor when converting:
+
+    - image-x distances to body-y meters (and vice versa).
+    - target distances along the body-y axis to image-x pixels.
+
+    See also :func:`px_per_meter_y` for the image-y (body-x) factor.
     """
     if altitude_m is None:
         return 0.0
@@ -155,34 +172,117 @@ def px_per_meter(altitude_m: Optional[float], target_height_m: float = 0.0) -> f
     return IMAGE_WIDTH / (2.0 * depth * math.tan(half_fov_rad))
 
 
-def hook_image_offset(
+def px_per_meter_y(
     altitude_m: Optional[float], target_height_m: float = 0.0
-) -> Tuple[float, float]:
-    """Pixel offset (dx, dy) from image center to where the hook projects
-    onto the depth plane at height `target_height_m` above ground.
+) -> float:
+    """Pixels per meter along **image-y** (== body-x in down-camera FLU).
+
+    Derived from ``VERTICAL_FOV_DEG`` and ``IMAGE_HEIGHT``. Use this
+    factor when converting:
+
+    - image-y distances to body-x meters (the lateral hose-row error
+      that drives ``vx`` in :class:`LowerAndAlign`).
+    - target distances along the body-x axis (e.g. ``ALIGN_STANDOFF_M``
+      keeping the rope ahead of the hook) to image-y pixels.
+
+    See also :func:`px_per_meter_x` for the image-x (body-y) factor.
     """
-    rate = px_per_meter(altitude_m, target_height_m)
-    return (-CAMERA_TO_HOOK_BODY_Y_M * rate, -CAMERA_TO_HOOK_BODY_X_M * rate)
+    if altitude_m is None:
+        return 0.0
+    depth = altitude_m - target_height_m
+    if depth <= 0.0:
+        return 0.0
+    half_fov_rad = math.radians(VERTICAL_FOV_DEG / 2.0)
+    return IMAGE_HEIGHT / (2.0 * depth * math.tan(half_fov_rad))
 
 
-def approach_setpoint(
-    bearing_unit: Tuple[float, float],
-    target_px: float,
+def image_offset_to_body(
+    image_offset: Tuple[float, float],
     altitude_m: Optional[float],
     target_height_m: float = 0.0,
 ) -> Tuple[float, float]:
-    """Image-space RADIAL setpoint along the captured bearing.
+    """Deproject an ``(image_dx, image_dy)`` from image center to the
+    body-frame ``(body_x_m, body_y_m)`` of the corresponding ground point.
 
-    Sphere should appear at `image_center + bearing*target_px + hook_offset`,
-    so the drone parks D meters short on the line drone-start -> sphere
-    (yaw-invariant). Hook offset uses the same depth plane as the bearing
-    to keep the HOOK (not the camera) at distance D from the sphere.
+    The down-camera convention is ``image -y -> body +x`` and
+    ``image +x -> body -y``, so
+
+    .. code-block:: text
+
+        body_x_m = -image_dy / ppm_y
+        body_y_m = -image_dx / ppm_x
+
+    Returns ``(0.0, 0.0)`` if altitude is missing or below ``target_height_m``.
     """
-    ux0, uy0 = bearing_unit
+    ppm_x = px_per_meter_x(altitude_m, target_height_m)
+    ppm_y = px_per_meter_y(altitude_m, target_height_m)
+    if ppm_x <= 0.0 or ppm_y <= 0.0:
+        return (0.0, 0.0)
+    dx, dy = image_offset
+    return (-dy / ppm_y, -dx / ppm_x)
+
+
+def hook_image_offset(
+    altitude_m: Optional[float], target_height_m: float = 0.0
+) -> Tuple[float, float]:
+    """Pixel offset ``(dx, dy)`` from image center to where the hook
+    projects onto the depth plane at height ``target_height_m``.
+
+    Anisotropic: image-x uses ``ppm_x`` (body-y → image-x), image-y uses
+    ``ppm_y`` (body-x → image-y).
+    """
+    ppm_x = px_per_meter_x(altitude_m, target_height_m)
+    ppm_y = px_per_meter_y(altitude_m, target_height_m)
+    return (-CAMERA_TO_HOOK_BODY_Y_M * ppm_x, -CAMERA_TO_HOOK_BODY_X_M * ppm_y)
+
+
+def image_bearing_to_body_unit(
+    image_bearing_unit: Tuple[float, float],
+    altitude_m: Optional[float],
+    target_height_m: float = 0.0,
+) -> Tuple[float, float]:
+    """Convert an image-frame unit-norm bearing ``(ux, uy)`` to the
+    body-frame unit direction it represents on the ground.
+
+    The result is yaw-invariant against altitude (the image bearing is
+    re-projected to body, then re-normalized) — only the ``ppm_y/ppm_x``
+    ratio matters, and that ratio is constant across altitudes for a
+    fixed FOV pair. Returns the input unchanged when the deprojected
+    vector is degenerate.
+    """
+    ux, uy = image_bearing_unit
+    bx, by = image_offset_to_body((ux, uy), altitude_m, target_height_m)
+    norm = math.hypot(bx, by)
+    if norm < 1e-9:
+        return image_bearing_unit
+    return (bx / norm, by / norm)
+
+
+def approach_setpoint(
+    body_bearing_unit: Tuple[float, float],
+    target_distance_m: float,
+    altitude_m: Optional[float],
+    target_height_m: float = 0.0,
+) -> Tuple[float, float]:
+    """Image-space radial setpoint, anisotropic-correct.
+
+    ``body_bearing_unit`` is the body-frame unit vector from the drone-start
+    toward the sphere, captured once at the start of approach (yaw-invariant).
+    The sphere should appear at the returned image position when the drone
+    has parked ``target_distance_m`` meters short of the sphere along the
+    world line drone-start → sphere. The hook (not the camera) is the
+    point held at distance ``target_distance_m``.
+
+    Each tick re-evaluates the target with current altitude (and thus
+    current ``ppm_x`` / ``ppm_y``).
+    """
+    bx, by = body_bearing_unit
+    ppm_x = px_per_meter_x(altitude_m, target_height_m)
+    ppm_y = px_per_meter_y(altitude_m, target_height_m)
     hx, hy = hook_image_offset(altitude_m, target_height_m)
     return (
-        IMAGE_CENTER_X + ux0 * target_px + hx,
-        IMAGE_CENTER_Y + uy0 * target_px + hy,
+        IMAGE_CENTER_X - target_distance_m * by * ppm_x + hx,
+        IMAGE_CENTER_Y - target_distance_m * bx * ppm_y + hy,
     )
 
 
@@ -209,23 +309,24 @@ def alignment_targets(
 
     Returns ``(target_sphere_cx, target_hose_cy, anchor_sign)``.
 
-    - ``target_sphere_cx``: where the sphere centroid should sit when the
-      hook is parked SPHERE_ANCHOR_DISTANCE_M from the sphere along the
-      chosen hose direction.
-    - ``target_hose_cy``: where the hose centroid should sit. With
-      ``standoff_m=0`` the hook is directly over the rope (DESCEND).
-      With ``standoff_m>0`` the rope is held that many meters in front
-      of the hook in body frame (rope appears in the upper half of the
-      image), keeping the lidar (mounted aft of the hook) clear of the
-      rope during ALIGN.
-    - ``anchor_sign``: +1 if the sphere should appear right of the hook
-      in image, -1 if left.
+    - ``target_sphere_cx``: image-x of the sphere centroid when the
+      hook is parked ``SPHERE_ANCHOR_DISTANCE_M`` from the sphere along
+      the chosen hose direction. Image-x ↔ body-y, so this uses
+      ``ppm_x``.
+    - ``target_hose_cy``: image-y of the hose centroid. With
+      ``standoff_m == 0`` the hook is directly over the rope
+      (descend phase). With ``standoff_m > 0`` the rope is held that
+      many meters in front of the hook in body frame (image upper
+      half). Image-y ↔ body-x, so this uses ``ppm_y``.
+    - ``anchor_sign``: +1 if the sphere should appear right of the
+      hook in image, -1 if left.
     """
-    ppm = px_per_meter(altitude_m, target_height_m)
+    ppm_x = px_per_meter_x(altitude_m, target_height_m)
+    ppm_y = px_per_meter_y(altitude_m, target_height_m)
     hook_dx, hook_dy = hook_image_offset(altitude_m, target_height_m)
     sign = anchor_sign_for_side(side_image_unit)
-    target_sphere_cx = IMAGE_CENTER_X + hook_dx + sign * SPHERE_ANCHOR_DISTANCE_M * ppm
-    target_hose_cy = IMAGE_CENTER_Y + hook_dy - standoff_m * ppm
+    target_sphere_cx = IMAGE_CENTER_X + hook_dx + sign * SPHERE_ANCHOR_DISTANCE_M * ppm_x
+    target_hose_cy = IMAGE_CENTER_Y + hook_dy - standoff_m * ppm_y
     return target_sphere_cx, target_hose_cy, sign
 
 
@@ -256,31 +357,105 @@ def pick_hose_by_dir(
 def predict_orient_yaw(
     side_unit: Tuple[float, float],
     sphere_xy: Tuple[float, float],
+    ppm_x: float,
+    ppm_y: float,
     image_center: Tuple[float, float] = (IMAGE_CENTER_X, IMAGE_CENTER_Y),
 ) -> float:
-    """Closest body-yaw rotation that makes the chosen rope horizontal in
-    image AND keeps the sphere in the upper half (rope in front of drone).
+    """Closest **body-frame** yaw rotation that makes the chosen rope
+    perpendicular to body +x AND keeps the sphere in front of the drone.
 
-    Image-frame rotation by Δ (positive = body CCW yaw) maps a point
-    ``(x, y)`` to ``(cosΔ·x − sinΔ·y, sinΔ·x + cosΔ·y)``. Two yaw
-    rotations make the rope horizontal:
+    Vision-only, anisotropic-correct. Both ``ppm_x`` and ``ppm_y`` (px/m)
+    are required so the image-frame inputs can be deprojected to body
+    frame; only their ratio matters (ppm scales out), but passing the
+    actual values keeps the API uniform with the rest of the perception
+    module. The result is the body-yaw delta in radians, in
+    ``(-π, π]`` — a positive value means the drone should yaw CCW.
 
-    - ``Δ_a = -atan2(uy, ux)`` (rope direction → +image-x)
-    - ``Δ_b = wrap_pi(Δ_a + π)`` (rope direction → -image-x)
+    Algorithm (once both inputs are deprojected to body):
 
-    The rope passes through the sphere, so it ends up in the image upper
-    half iff ``new_sy = sin(Δ)·dx + cos(Δ)·dy < 0``. That sign
-    discriminates which Δ to use. Result is in ``(-π, π]``.
+    1. Rope direction in body: ``rb = (-uy/ppm_y, -ux/ppm_x)``.
+    2. Sphere body-frame coords: ``bs = (-(sy-cy)/ppm_y, -(sx-cx)/ppm_x)``.
+    3. Two body yaws make the rope perpendicular to body +x:
+       ``Δa = atan2(-rb_x, rb_y)`` and ``Δb = Δa + π``.
+    4. Pick the one that puts the sphere in front of the drone (body +x
+       positive after rotation).
 
-    Scale-invariant: depends only on the sphere's image position relative
-    to image center, and the rope's image direction. No ``ppm``, no
-    altitude. Vision-only.
+    Reduces to the old image-rotation formula when ``ppm_x == ppm_y``.
     """
     ux, uy = side_unit
     sx, sy = sphere_xy
     cx, cy = image_center
-    dx, dy = sx - cx, sy - cy
-    delta_a = math.atan2(-uy, ux)
-    disc = math.sin(delta_a) * dx + math.cos(delta_a) * dy
-    delta = delta_a if disc < 0 else delta_a + math.pi
+    if ppm_x <= 0.0 or ppm_y <= 0.0:
+        return 0.0
+
+    bs_x = -(sy - cy) / ppm_y
+    bs_y = -(sx - cx) / ppm_x
+    rb_x = -uy / ppm_y
+    rb_y = -ux / ppm_x
+
+    delta_a = math.atan2(-rb_x, rb_y)
+    new_bs_x = math.cos(delta_a) * bs_x + math.sin(delta_a) * bs_y
+    delta = delta_a if new_bs_x > 0.0 else delta_a + math.pi
     return math.atan2(math.sin(delta), math.cos(delta))
+
+
+def sphere_body_angle(
+    sphere_xy: Tuple[float, float],
+    ppm_x: float,
+    ppm_y: float,
+    image_center: Tuple[float, float] = (IMAGE_CENTER_X, IMAGE_CENTER_Y),
+) -> float:
+    """Body-frame polar angle of the sphere as seen from the drone:
+    ``atan2(body_y, body_x)`` where ``body_x`` is forward and ``body_y``
+    is left, derived from the sphere's image position by anisotropic
+    deprojection.
+
+    Used as the PID feedback during the yaw spin in :class:`OrientToHook`
+    because the change in this angle equals minus the body-yaw delta (a
+    pure rotation of the body frame around the camera nadir): if the
+    drone yaws CCW by Δ, the sphere's body-frame polar angle decreases
+    by Δ. That makes the loop's transient response invariant to the
+    anisotropic ppm — which the image-frame polar angle is **not**.
+    """
+    sx, sy = sphere_xy
+    cx, cy = image_center
+    if ppm_x <= 0.0 or ppm_y <= 0.0:
+        return 0.0
+    bs_x = -(sy - cy) / ppm_y
+    bs_y = -(sx - cx) / ppm_x
+    return math.atan2(bs_y, bs_x)
+
+
+def rotate_image_vector_under_body_yaw(
+    image_vec: Tuple[float, float],
+    delta_body: float,
+    ppm_x: float,
+    ppm_y: float,
+) -> Tuple[float, float]:
+    """Image-frame transformation of a unit direction caused by a body
+    yaw rotation under anisotropic pixel scaling.
+
+    Derivation: body yaw by ``delta_body`` (CCW) rotates body coordinates
+    of fixed world points by ``-delta_body`` in body frame. Re-projecting
+    through the anisotropic pinhole ``image_x = -body_y·ppm_x``,
+    ``image_y = -body_x·ppm_y`` yields
+
+    .. code-block:: text
+
+        new_ux = cos(Δ)·ux - sin(Δ)·(ppm_x/ppm_y)·uy
+        new_uy = sin(Δ)·(ppm_y/ppm_x)·ux + cos(Δ)·uy
+
+    which is **not** a pure rotation when ``ppm_x != ppm_y``. The output
+    is renormalized so consumers (e.g. ``pick_hose_by_dir``) can compare
+    it against image-frame unit vectors directly.
+    """
+    if ppm_x <= 0.0 or ppm_y <= 0.0:
+        return image_vec
+    ux, uy = image_vec
+    cos_d, sin_d = math.cos(delta_body), math.sin(delta_body)
+    new_ux = cos_d * ux - sin_d * (ppm_x / ppm_y) * uy
+    new_uy = sin_d * (ppm_y / ppm_x) * ux + cos_d * uy
+    norm = math.hypot(new_ux, new_uy)
+    if norm < 1e-9:
+        return image_vec
+    return (new_ux / norm, new_uy / norm)

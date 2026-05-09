@@ -56,11 +56,18 @@ cylinder at `(+0.05, +0.07, −0.05)` so the saved JPGs show the hook position.
   no GPS / position-mode flight inside the inner loops.
 - The sphere and the rope are at world height `SPHERE_HEIGHT_M = 1.7 m`.
   Pixel-per-meter is computed at the *target depth* `(altitude − target_height)`,
-  not at altitude alone — see `px_per_meter()` in
-  [hook/core/perception.py](hook/core/perception.py).
-- All position controllers feed errors in **meters** (`err_px / ppm`), not
-  pixels. PID gains are `m/s per m`. This keeps response invariant across the
-  altitude range each state spans.
+  not at altitude alone.
+- The camera has **anisotropic** pixels-per-meter — the wide-angle lens
+  (`HFOV = 86°`, `VFOV = 47°`) gives different focal lengths in image-x
+  and image-y. We use `px_per_meter_x()` (HFOV+IMAGE_WIDTH) for image-x ↔
+  body-y conversions and `px_per_meter_y()` (VFOV+IMAGE_HEIGHT) for
+  image-y ↔ body-x conversions. See [hook/core/perception.py](hook/core/perception.py).
+  Helper `image_offset_to_body()` deprojects a 2-D image offset to body
+  coordinates; ALIGN's `vx`-driving error uses `ppm_y`, its `vy`-driving
+  error uses `ppm_x`.
+- All position controllers feed errors in **meters** (`err_px / ppm_axis`),
+  not pixels. PID gains are `m/s per m`. This keeps response invariant
+  across the altitude range each state spans.
 
 ## Strategy (one paragraph)
 
@@ -117,7 +124,7 @@ stateDiagram-v2
 | SEARCH_ASCEND    | `search_ascend`   | [hook/states/search_and_ascend.py](hook/states/search_and_ascend.py)  | Hover, run segmentor; ascend at `ASCEND_VELOCITY` (capped at `MAX_ASCEND_ALTITUDE`) until `ASCENT_STOP_CONFIRMATIONS` consecutive sphere detections. |
 | APPROACH         | `approach`        | [hook/states/approach_sphere.py](hook/states/approach_sphere.py)      | Step 1 (lateral): capture bearing unit `(ux0, uy0)` over `APPROACH_INIT_BEARING_FRAMES` detections; two metric PIDs drive the sphere onto a radial setpoint at `APPROACH_TARGET_DISTANCE_M`. Step 2 (descent): same PIDs while descending at `APPROACH_DESCEND_VELOCITY` until `LIDAR ≤ WORK_ALTITUDE`. Stores `approach_bearing_unit` and `approach_image_offset`. |
 | SELECT_SIDE      | `select_side`     | [hook/states/select_hose_side.py](hook/states/select_hose_side.py)    | Decision-only (no movement). Sample `SIDE_SAMPLE_FRAMES` frames; lock rope long-axis from the most-confident `rose`; bucket each `rose` instance by sign of its centroid projection onto that axis from the sphere; pick side with greater accumulated long-axis length. Tie (`ratio < SIDE_LENGTH_RATIO`) → fallback to side anti-aligned with `approach_image_offset`. Stores `hose_side_image_unit` and `anchor_sign` (predicted from sign of `side_unit.x`). |
-| ORIENT_TO_HOOK   | `orient_to_hook`  | [hook/states/orient_to_hook.py](hook/states/orient_to_hook.py)        | Predictive yaw, vision-only. Sample `ORIENT_SAMPLE_FRAMES` good frames; per frame compute `Δ = predict_orient_yaw(side_unit, sphere_xy)` — the closest body yaw that makes the rope horizontal in image AND keeps the sphere in the upper half. Vector-mean across frames. If `\|Δ\| < ORIENT_SKIP_THRESHOLD_RAD`: SUCCEED with no rotation. Otherwise spin: PID on `wrap_pi(theta_current − theta_target)` where `theta_target = theta_initial + Δ` and `theta` is the sphere's image-frame polar angle around image center. Converges when `\|err\| < ORIENT_ANGLE_TOLERANCE_RAD` for `ORIENT_CONFIRMATIONS` frames. On success rotates `hose_side_image_unit` by the OBSERVED yaw delta (`theta_final − theta_initial`) and refreshes `anchor_sign` so `LOWER_AND_ALIGN` sees the post-spin body frame transparently. Sphere-loss tolerant (holds last `vyaw` for up to `ORIENT_MAX_LOST_FRAMES` frames). |
+| ORIENT_TO_HOOK   | `orient_to_hook`  | [hook/states/orient_to_hook.py](hook/states/orient_to_hook.py)        | Predictive yaw, vision-only, anisotropic-correct. Sample `ORIENT_SAMPLE_FRAMES` good frames; per frame compute `Δ = predict_orient_yaw(side_unit, sphere_xy, ppm_x, ppm_y)` — the closest **body** yaw that makes the rope horizontal in image AND keeps the sphere in the upper half. Vector-mean across frames. If `\|Δ\| < ORIENT_SKIP_THRESHOLD_RAD`: SUCCEED with no rotation. Otherwise spin: PID drives the cumulative body yaw (computed from the sphere's body-frame polar angle, anisotropic-deprojected) to `Δ_target`. Converges when `\|err\| < ORIENT_ANGLE_TOLERANCE_RAD` for `ORIENT_CONFIRMATIONS` frames. On success rotates `hose_side_image_unit` by the OBSERVED body-yaw delta (anisotropic image transformation) and refreshes `anchor_sign` so `LOWER_AND_ALIGN` sees the post-spin body frame transparently. Sphere-loss tolerant (holds last `vyaw` for up to `ORIENT_MAX_LOST_FRAMES` frames). |
 | LOWER_AND_ALIGN  | `lower_and_align` | [hook/states/lower_and_align.py](hook/states/lower_and_align.py)      | Three image-frame PIDs (rope angle → `vyaw`; hose row → `vx`; sphere anchor → `vy`) plus altitude-proportional `vz` during the descent phase, all on the same controller stack. Three internal phases: `yaw` (only `vyaw` while `\|angle\| > ALIGN_YAW_FIRST_TOLERANCE_DEG`), `align` (full `(vx, vy, vyaw)` with `standoff = ALIGN_STANDOFF_M`, `vz = 0`; exits to descend after `HOSE_ALIGN_CONFIRMATIONS` ticks within tol), and `descend` (same controllers; standoff ramps `ALIGN_STANDOFF_M → 0` over `DESCEND_STANDOFF_RAMP_TICKS`; `vz = -clip(DESCEND_VZ_KP·(alt − RELEASE_ALTITUDE), VZ_MIN, VZ_MAX)` with hard zero at/below the floor; SUCCEED on `alt ≤ RELEASE_ALTITUDE` AND lateral/angle within tol for `DESCEND_RELEASE_CONFIRMATIONS` frames). Sphere-loss fallback (uniform across phases): if the sphere is missing OR `target_sphere_cx` leaves `[DESCEND_SPHERE_TARGET_MARGIN_PX, IMAGE_WIDTH − margin]`, the anchor PID is disabled (`vy = 0`, `anchor_ok = True`) and `pick_hose_by_dir` falls back to the most-confident `rose`. Sphere loss does NOT abort. Only chosen-hose loss for `LOWER_MAX_LOST_FRAMES` consecutive frames aborts. |
 | RELEASE          | `release`         | [hook/states/release_hook.py](hook/states/release_hook.py)            | Stop motion, drive `SERVO_CHANNEL` from `HOLD_PWM` to `RELEASE_PWM`. |
 | RETURN_TO_LAUNCH | (suffix)          | [hook/core/states.py](hook/core/states.py)                            | `drone.rtl(altitude=RTL_ALTITUDE, method=NAVIGATE, land=False)`. |
@@ -126,16 +133,20 @@ stateDiagram-v2
 ## APPROACH — radial setpoint, metric PIDs, safety
 
 - **Radial setpoint.** On the first `APPROACH_INIT_BEARING_FRAMES` good
-  detections the median `(ux0, uy0)` is computed from sphere offsets to image
-  center and frozen. Each tick the setpoint is
+  detections the median image-frame bearing is deprojected to a
+  **body-frame** unit vector and frozen on the blackboard. Each tick the
+  setpoint is reconstructed at current altitude with anisotropic ppm:
 
   ```
-  target_px = APPROACH_TARGET_DISTANCE_M * px_per_meter(alt, SPHERE_HEIGHT_M)
-  setpoint  = image_center + (ux0, uy0) * target_px + hook_image_offset(alt)
+  ppm_x = px_per_meter_x(alt, SPHERE_HEIGHT_M)
+  ppm_y = px_per_meter_y(alt, SPHERE_HEIGHT_M)
+  setpoint_x = ICX − D · body_bearing.y · ppm_x + hook_image_offset.x
+  setpoint_y = ICY − D · body_bearing.x · ppm_y + hook_image_offset.y
   ```
 
   This puts the **hook** on the world line *takeoff → sphere*, exactly
-  `APPROACH_TARGET_DISTANCE_M` short of the sphere, regardless of yaw. See
+  `APPROACH_TARGET_DISTANCE_M` short of the sphere, regardless of yaw
+  AND regardless of the lens's FOV asymmetry. See
   [`approach_setpoint`](hook/core/perception.py).
 
 - **Metric PIDs.** Two SDK `PIDController`s (`pid_x`, `pid_y`) feed on
@@ -177,28 +188,24 @@ the drone in the wrong half. This state computes the closest yaw that
 puts the rope perpendicular **and** in front, vision-only, in a single
 shot.
 
-- **Predictive math** (closed-form, scale-invariant — see
-  [`predict_orient_yaw`](hook/core/perception.py)). Image-frame rotation
-  by Δ (positive = body CCW yaw) maps `(x, y)` to
-  `(cosΔ·x − sinΔ·y, sinΔ·x + cosΔ·y)`. Two yaw rotations make the rope
-  horizontal:
+- **Predictive math** (closed-form, anisotropic-correct — see
+  [`predict_orient_yaw`](hook/core/perception.py)). Both `ppm_x` and
+  `ppm_y` are required so the image-frame inputs are deprojected to
+  body frame before the geometric reasoning:
 
   ```
-  Δ_a = -atan2(uy, ux)            # rope direction → +image-x
-  Δ_b = wrap_pi(Δ_a + π)          # rope direction → -image-x
+  bs   = (-(sy-cy)/ppm_y, -(sx-cx)/ppm_x)     # sphere body coords
+  rb   = (-uy/ppm_y, -ux/ppm_x)               # rope direction in body
+  Δ_a  = atan2(-rb.x, rb.y)                   # body yaw → rope along ±body_y
+  Δ_b  = Δ_a + π
   ```
 
-  The rope passes through the sphere, so it ends up in the image upper
-  half iff `new_sy = sin(Δ)·dx + cos(Δ)·dy < 0`. The sign of that
-  expression at `Δ_a` discriminates which Δ to use:
-
-  ```
-  disc = sin(Δ_a)·dx + cos(Δ_a)·dy
-  Δ_target = Δ_a if disc < 0 else wrap_pi(Δ_a + π)
-  ```
-
-  No `ppm`, no altitude, no GPS — only sphere image position and rope
-  direction. Determinstic.
+  The rope ends up in front of the drone (body +x positive) iff
+  `cos(Δ)·bs.x + sin(Δ)·bs.y > 0`. That sign picks between Δ_a and
+  Δ_b; the result is wrapped to `(−π, π]`. **Body yaw**, not image
+  rotation — the two are no longer the same with the lens's anisotropic
+  FOV, and the body yaw is what the drone's vyaw command actually
+  produces.
 
 - **Sample phase.** `ORIENT_SAMPLE_FRAMES` good frames (sphere AND chosen
   rope visible). The chosen rope's `axis_unit` is sign-aligned with the
@@ -211,44 +218,53 @@ shot.
   `anchor_sign` stay untouched. The working
   `drone_yaw_deg ∈ {±90, −45}` cases for an in-front rope land here.
 
-- **Spin phase.** Sphere image-frame polar angle around image center is
-  the only signal that survives an arbitrary yaw rotation without
-  identity ambiguity (the sphere is uniquely identified):
+- **Spin phase.** Feedback is the sphere's **body-frame** polar angle
+  derived from its image position by anisotropic deprojection:
 
   ```
-  theta_initial = atan2(sy - IMAGE_CENTER_Y, sx - IMAGE_CENTER_X)
-  theta_target  = wrap_pi(theta_initial + Δ_target)
-  err_rad       = wrap_pi(theta_current - theta_target)
-  vyaw          = pid_yaw.update(err_rad)        # setpoint=0 -> output ≈ -kp·err
+  phi(t) = atan2(body_y(t), body_x(t))
+         = atan2(-(sx(t)-cx)/ppm_x, -(sy(t)-cy)/ppm_y)
   ```
 
-  Converges when `|err_rad| < ORIENT_ANGLE_TOLERANCE_RAD` for
-  `ORIENT_CONFIRMATIONS` consecutive frames.
+  When the body yaws CCW by Δ (a pure rotation of the body frame around
+  the camera nadir), the world point's body coords transform by R(−Δ)
+  and `phi` decreases by exactly Δ. So the cumulative body-yaw
+  observed during the spin is `wrap_pi(phi_initial − phi_current)`,
+  which we drive to `Δ_target`. This is invariant to `ppm_y/ppm_x` —
+  the image-frame polar angle is **not** (it gets warped by the
+  anisotropic projection during the rotation).
+
+  Converges when the wrapped error stays under
+  `ORIENT_ANGLE_TOLERANCE_RAD` for `ORIENT_CONFIRMATIONS` consecutive
+  frames.
 
 - **Sphere-loss robustness.** If `best_sphere` returns None for one tick,
   the last commanded `vyaw` is held. Aborts only after
   `ORIENT_MAX_LOST_FRAMES` consecutive misses or `ORIENT_TIMEOUT`
   seconds. Hose tracking is **not** required during the spin.
 
-- **Commit.** On convergence, the OBSERVED yaw delta is used (not the
-  commanded one — robust to the ±`ORIENT_ANGLE_TOLERANCE_RAD` PID
-  tolerance):
+- **Commit.** On convergence, the OBSERVED body-yaw delta is used (not
+  the commanded one — robust to the ±`ORIENT_ANGLE_TOLERANCE_RAD` PID
+  tolerance) and `hose_side_image_unit` is rotated by the corresponding
+  **anisotropic image-frame transformation** via
+  [`rotate_image_vector_under_body_yaw`](hook/core/perception.py):
 
   ```python
-  delta_actual = wrap_pi(theta_final - theta_initial)
-  blackboard["hose_side_image_unit"] = R(delta_actual) @ side_unit
-  blackboard["anchor_sign"]          = anchor_sign_for_side(new_side_unit)
+  delta_actual = wrap_pi(phi_initial - phi_final)
+  blackboard["hose_side_image_unit"] = rotate_image_vector_under_body_yaw(
+      side_unit, delta_actual, ppm_x, ppm_y,
+  )
+  blackboard["anchor_sign"] = anchor_sign_for_side(new_side_unit)
   ```
 
-  This generalizes the old 180°-flip case (where Δ = π and the sign
-  negation falls out automatically) to any angle.
+  Reduces to the old `R(Δ)·side_unit` when `ppm_x == ppm_y`.
 
 - **Saved overlay** (per frame, `~/sae2026/<ts>/orient_to_hook/`): cyan
-  `+` at image center, red dot at live sphere, dashed yellow ray to
-  `theta_target`, magenta ray to `theta_current`, yellow chosen-rope
+  `+` at image center, red dot at live sphere, yellow chosen-rope
   axis when available, HUD with `phase` (`sample`/`spin`),
-  `delta_target` (sample) or `theta_curr`/`theta_tgt`/`err_deg` (spin),
-  and commanded `vyaw`.
+  `delta_tgt` (predicted body yaw), and `err` (live body-yaw error
+  during the spin). Convergence is "rope axis horizontal AND sphere
+  upper half".
 
 ## LOWER_AND_ALIGN — sphere-anchored stand-off + LIDAR descent
 
@@ -280,11 +296,12 @@ previous separate `ALIGN_TO_HOSE` and `DESCEND_AND_ALIGN` states.
   SUCCEED on `altitude ≤ RELEASE_ALTITUDE` AND lateral/angle within
   tolerance for `DESCEND_RELEASE_CONFIRMATIONS` frames.
 
-Wiring (image-to-body: `image -y → body +x`, `image +x → body -y`):
+Wiring (image-to-body: `image -y → body +x`, `image +x → body -y`;
+anisotropic ppm — see top of README):
 
 ```
-vx   ← pid_center.update((hose_cy - target_hose_cy) / ppm)
-vy   ← pid_anchor.update((sphere_cx - target_sphere_cx) / ppm)
+vx   ← pid_center.update((hose_cy - target_hose_cy) / ppm_y)   # image-y → body-x
+vy   ← pid_anchor.update((sphere_cx - target_sphere_cx) / ppm_x)  # image-x → body-y
 vyaw ← pid_yaw.update(angle_deg)
 ```
 
@@ -487,7 +504,14 @@ All in [hook/core/constants.py](hook/core/constants.py).
 | `CAMERA_BODY_OFFSET_X_M` / `_Y_M` | +0.05 / −0.03 |
 | `CAMERA_TO_HOOK_BODY_X_M` / `_Y_M` | 0.00 / +0.10 |
 | `SPHERE_HEIGHT_M` | 1.7 |
-| `PPM_REF` (derived) | `IMAGE_WIDTH / (2·(WORK_ALTITUDE − SPHERE_HEIGHT_M)·tan(HFOV/2))` |
+
+The metric scaling helpers `px_per_meter_x` / `px_per_meter_y` derive
+the per-axis ppm at runtime from the altitude and the corresponding
+(FOV, image extent) pair. At `WORK_ALTITUDE = 3.3 m` and
+`SPHERE_HEIGHT_M = 1.7 m`, depth is 1.6 m and the values are
+`ppm_x ≈ 643 px/m`, `ppm_y ≈ 776 px/m` (factor 1.21 difference). The
+hose-row error (image-y) and the standoff target use `ppm_y`; the
+sphere-anchor error and target (image-x) use `ppm_x`.
 
 ### Segmentation
 | Name | Value |

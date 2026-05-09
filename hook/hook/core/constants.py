@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 # --- Altitude (meters) ---
 INITIAL_TAKEOFF_ALTITUDE = 4.0
 MAX_ASCEND_ALTITUDE = 6.8
-WORK_ALTITUDE = 3.3
+WORK_ALTITUDE = 3.4
 RELEASE_ALTITUDE = 2.0
 RTL_ALTITUDE = 2.7
 
@@ -37,7 +37,8 @@ CAMERA_BODY_OFFSET_Y_M = -0.03  # 3 cm to the right (-y)
 CAMERA_TO_HOOK_BODY_X_M = 0.00  # hook on the same +x line as camera
 CAMERA_TO_HOOK_BODY_Y_M = 0.10  # hook 10 cm to the left of camera
 
-# Used by px_per_meter to remove the parallax error
+# Used by px_per_meter_x / px_per_meter_y to remove the parallax error
+# (target plane height instead of the ground plane).
 SPHERE_HEIGHT_M = 1.7  # sphere mounted on hose at top of supports
 
 # Segmentation model
@@ -62,7 +63,7 @@ ASCENT_STOP_CONFIRMATIONS = 20
 ASCENT_TIMEOUT = 60.0  # seconds
 
 # Approach sphere
-APPROACH_TARGET_DISTANCE_M = 0.72  # parked hook-to-sphere horizontal distance
+APPROACH_TARGET_DISTANCE_M = 0.55  # parked hook-to-sphere horizontal distance
 APPROACH_MIN_SAFE_DISTANCE_M = 0.50  # safety floor (never push closer)
 APPROACH_KP_M = 0.80  # m/s per m_error (same Kp on both axes)
 APPROACH_TOL_M = 0.10  # convergence band
@@ -80,12 +81,12 @@ SIDE_LENGTH_RATIO = 1.4
 SIDE_TIMEOUT = 30.0
 
 # ORIENT — predictive yaw to put the chosen rope perpendicular AND in front.
-# Sample N frames after SELECT_SIDE; for each frame compute the closest yaw
-# rotation Δ that makes the rope horizontal in image AND keeps the sphere in
-# the upper half (rope in front). Vector-mean over (cosΔ, sinΔ) handles wrap.
-# If |Δ| < ORIENT_SKIP_THRESHOLD_RAD: SUCCEED with no rotation. Otherwise
-# spin using the existing sphere-polar-angle PID with theta_target =
-# theta_initial + Δ.
+# Sample N frames after SELECT_SIDE; per frame compute the closest BODY
+# yaw rotation Δ (anisotropic-deprojected via px_per_meter_x/_y) that
+# makes the rope perpendicular to body +x AND keeps the sphere in front.
+# Vector-mean over (cosΔ, sinΔ) handles wrap. If |Δ| < ORIENT_SKIP_THRESHOLD_RAD:
+# SUCCEED with no rotation. Otherwise spin: PID drives the cumulative
+# body yaw (computed from the sphere's body-frame polar angle) to Δ_target.
 ORIENT_SAMPLE_FRAMES = 6
 ORIENT_SKIP_THRESHOLD_RAD = math.radians(5.0)
 ORIENT_YAW_KP = 0.6  # rad/s per rad of polar-angle error
@@ -97,12 +98,6 @@ ORIENT_CONFIRMATIONS = 5
 ORIENT_TIMEOUT = 65.0  # seconds
 ORIENT_MAX_LOST_FRAMES = 65  # sphere-loss tolerance during the spin
 
-PPM_REF = IMAGE_WIDTH / (
-    2.0
-    * (WORK_ALTITUDE - SPHERE_HEIGHT_M)
-    * math.tan(math.radians(HORIZONTAL_FOV_DEG / 2.0))
-)
-
 PID_MIN_OUTPUT_VELOCITY_XY = 0.06  # m/s
 PID_MIN_OUTPUT_VYAW = 0.01  # rad/s
 
@@ -112,11 +107,11 @@ HOSE_MIN_CONTOUR_AREA = 200  # px², minimum contour area to fit a hose pose
 HOSE_ANGLE_TOLERANCE_DEG = 5.0
 HOSE_ANGLE_KP = 0.0098  # rad/s per degree
 HOSE_ANGLE_MAX_VELOCITY = 0.28  # rad/s
-HOSE_CENTER_TOLERANCE_M = 0.050
+HOSE_CENTER_TOLERANCE_M = 0.06
 HOSE_CENTER_KP = 0.80  # m/s per m
 HOSE_CENTER_MAX_VELOCITY = 0.25  # m/s
 HOSE_ALIGN_CONFIRMATIONS = 8
-HOSE_ALIGN_TIMEOUT = 100  # seconds
+HOSE_ALIGN_TIMEOUT = 180  # seconds
 # Chosen-hose loss tolerance for the merged LOWER_AND_ALIGN state. Sphere
 # loss is NOT counted: when sphere is missing the controller falls back to
 # hose-only (vy=0). Only consecutive frames where the chosen rope itself
@@ -125,7 +120,7 @@ LOWER_MAX_LOST_FRAMES = 60
 
 # Sphere anchor (along-hose) used by LOWER_AND_ALIGN.
 SPHERE_ANCHOR_DISTANCE_M = 0.5  # meters from sphere center along chosen hose direction
-SPHERE_ANCHOR_TOLERANCE_M = 0.055
+SPHERE_ANCHOR_TOLERANCE_M = 0.06
 SPHERE_ANCHOR_KP = 0.66  # m/s per m
 
 # Rope held this far in front of the hook (body +x) during ALIGN. Keeps
@@ -148,7 +143,7 @@ DESCEND_VZ_KP = 0.20
 DESCEND_VZ_MIN = 0.05  
 DESCEND_VZ_MAX = 0.20  
 DESCEND_RELEASE_CONFIRMATIONS = 5
-DESCEND_TIMEOUT = 120  # seconds
+DESCEND_TIMEOUT = 180  # seconds
 
 # Linear ramp from ALIGN_STANDOFF_M to 0 over this many control ticks at
 # the start of DESCEND. Eliminates the ~200 px target step (~0.30 m at
