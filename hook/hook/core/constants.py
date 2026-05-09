@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 # --- Altitude (meters) ---
 INITIAL_TAKEOFF_ALTITUDE = 4.0
 MAX_ASCEND_ALTITUDE = 6.8
-WORK_ALTITUDE = 3.0
+WORK_ALTITUDE = 3.3
 RELEASE_ALTITUDE = 2.0
 RTL_ALTITUDE = 2.7
 
@@ -79,9 +79,15 @@ SIDE_SAMPLE_FRAMES = 20
 SIDE_LENGTH_RATIO = 1.4
 SIDE_TIMEOUT = 30.0
 
-# Orient to hook — pre-rotate so the chosen rope is in front of the drone.
-ORIENT_BEHIND_THRESHOLD_M = 0.10  # rope body-x < -0.10m triggers the 180° flip
-ORIENT_BEHIND_SAMPLE_FRAMES = 8  # median-vote over this many frames before deciding
+# ORIENT — predictive yaw to put the chosen rope perpendicular AND in front.
+# Sample N frames after SELECT_SIDE; for each frame compute the closest yaw
+# rotation Δ that makes the rope horizontal in image AND keeps the sphere in
+# the upper half (rope in front). Vector-mean over (cosΔ, sinΔ) handles wrap.
+# If |Δ| < ORIENT_SKIP_THRESHOLD_RAD: SUCCEED with no rotation. Otherwise
+# spin using the existing sphere-polar-angle PID with theta_target =
+# theta_initial + Δ.
+ORIENT_SAMPLE_FRAMES = 6
+ORIENT_SKIP_THRESHOLD_RAD = math.radians(5.0)
 ORIENT_YAW_KP = 0.6  # rad/s per rad of polar-angle error
 ORIENT_MAX_YAW_VELOCITY = (
     0.42  # rad/s — well above HOSE_ANGLE_MAX_VELOCITY (0.28) for fast slew
@@ -111,9 +117,13 @@ HOSE_CENTER_KP = 0.80  # m/s per m
 HOSE_CENTER_MAX_VELOCITY = 0.25  # m/s
 HOSE_ALIGN_CONFIRMATIONS = 8
 HOSE_ALIGN_TIMEOUT = 100  # seconds
-HOSE_ALIGN_MAX_LOST_FRAMES = 60
+# Chosen-hose loss tolerance for the merged LOWER_AND_ALIGN state. Sphere
+# loss is NOT counted: when sphere is missing the controller falls back to
+# hose-only (vy=0). Only consecutive frames where the chosen rope itself
+# can't be detected count toward this limit.
+LOWER_MAX_LOST_FRAMES = 60
 
-# Sphere anchor (along-hose) used in ALIGN_TO_HOSE and DESCEND_AND_ALIGN
+# Sphere anchor (along-hose) used by LOWER_AND_ALIGN.
 SPHERE_ANCHOR_DISTANCE_M = 0.5  # meters from sphere center along chosen hose direction
 SPHERE_ANCHOR_TOLERANCE_M = 0.055
 SPHERE_ANCHOR_KP = 0.66  # m/s per m
@@ -136,25 +146,15 @@ ALIGN_YAW_FIRST_TOLERANCE_DEG = 18.0
 # floor: the drone never descends past RELEASE_ALTITUDE regardless of
 # convergence state, so the hook cannot hit anything below the rope while
 # the lateral controllers are still settling. Lateral and yaw control
-# continue normally throughout.
+# continue normally throughout (LOWER_AND_ALIGN reuses the same
+# HOSE_*/SPHERE_ANCHOR_* gains in both align and descend phases).
 #   vz_command = -clip(DESCEND_VZ_KP * (alt - RELEASE_ALTITUDE),
 #                      DESCEND_VZ_MIN, DESCEND_VZ_MAX)
 DESCEND_VZ_KP = 0.20  # 1/s
 DESCEND_VZ_MIN = 0.05  # m/s near the floor
 DESCEND_VZ_MAX = 0.20  # m/s well above the floor
-DESCEND_CENTER_KP = 0.65  # m/s per m
-DESCEND_ANGLE_KP = 0.0088  # rad/s per degree
-DESCEND_ANCHOR_KP = 0.60  # m/s per m
-DESCEND_MAX_VELOCITY_XY = 0.22
-DESCEND_MAX_YAW_VELOCITY = 0.3
-DESCEND_CENTER_TOLERANCE_M = 0.07
-DESCEND_ANGLE_TOLERANCE_DEG = 5.0
-DESCEND_ANCHOR_TOLERANCE_M = 0.068  # ~45 px at WORK_ALTITUDE
 DESCEND_RELEASE_CONFIRMATIONS = 5
 DESCEND_TIMEOUT = 120  # seconds
-DESCEND_MAX_LOST_FRAMES = (
-    60  # counts ONLY hose losses; missing sphere is expected at low altitude
-)
 
 # Linear ramp from ALIGN_STANDOFF_M to 0 over this many control ticks at
 # the start of DESCEND. Eliminates the ~200 px target step (~0.30 m at

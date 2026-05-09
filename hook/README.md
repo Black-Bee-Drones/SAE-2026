@@ -72,12 +72,16 @@ ascend until the sphere is debounced; capture an approach bearing once and
 fly to a radial setpoint that is `APPROACH_TARGET_DISTANCE_M` real-world
 meters short of the sphere (yaw-invariant); descend keeping that line; pick
 the longer rope segment as the side and predict the anchor sign from it (no
-open-loop body shift); pre-rotate 180° (sphere-anchored, vision-only) iff
-the chosen rope is behind the drone in body frame so ALIGN never has to
-back over the rope; align to a stand-off pose where the rope is held
-`ALIGN_STANDOFF_M` in front of the hook; descend on LIDAR with a hard
-altitude floor at `RELEASE_ALTITUDE` while the standoff ramps to 0 and the
-sphere anchor is dropped once it leaves the FOV; servo the hook; RTL + land.
+open-loop body shift); compute the closest yaw rotation `Δ_target` that
+makes the rope perpendicular to body +x AND in front of the drone, then
+spin to it (sphere-anchored polar-angle PID, vision-only) so ALIGN never
+has to back over the rope or land in the wrong half; run the merged
+`LOWER_AND_ALIGN` controller — three image-frame PIDs (rope angle, hose
+row, sphere anchor) hold a stand-off pose where the rope is `ALIGN_STANDOFF_M`
+in front of the hook, then descend on LIDAR with a hard altitude floor at
+`RELEASE_ALTITUDE` while the standoff ramps to 0 and the sphere anchor is
+dropped (vy=0, hose-only) whenever the sphere is missing or its target
+walks off the FOV; servo the hook; RTL + land.
 
 ## State machine
 
@@ -96,9 +100,8 @@ stateDiagram-v2
     SEARCH_ASCEND --> APPROACH: succeed
     APPROACH --> SELECT_SIDE: succeed
     SELECT_SIDE --> ORIENT_TO_HOOK: succeed
-    ORIENT_TO_HOOK --> ALIGN: succeed
-    ALIGN --> DESCEND: succeed
-    DESCEND --> RELEASE: succeed
+    ORIENT_TO_HOOK --> LOWER_AND_ALIGN: succeed
+    LOWER_AND_ALIGN --> RELEASE: succeed
     RELEASE --> end_branch
     end_branch --> RETURN_TO_LAUNCH: end=rtl
     end_branch --> LAND: end=land
@@ -107,19 +110,18 @@ stateDiagram-v2
     LAND --> [*]
 ```
 
-| State            | Stage name      | File                                                                  | What it does |
-|------------------|-----------------|-----------------------------------------------------------------------|--------------|
-| INITIALIZE       | (prefix)        | [hook/core/states.py](hook/core/states.py)                            | Build `MavrosDrone` (SITL or GPS), open camera (`/down_camera/compressed` in sim, OpenCV otherwise), load segmentor, build per-class confidence filter. |
-| TAKEOFF          | (prefix)        | [hook/core/states.py](hook/core/states.py)                            | Arm + take off to `INITIAL_TAKEOFF_ALTITUDE`. |
-| SEARCH_ASCEND    | `search_ascend` | [hook/states/search_and_ascend.py](hook/states/search_and_ascend.py)  | Hover, run segmentor; ascend at `ASCEND_VELOCITY` (capped at `MAX_ASCEND_ALTITUDE`) until `ASCENT_STOP_CONFIRMATIONS` consecutive sphere detections. |
-| APPROACH         | `approach`      | [hook/states/approach_sphere.py](hook/states/approach_sphere.py)      | Step 1 (lateral): capture bearing unit `(ux0, uy0)` over `APPROACH_INIT_BEARING_FRAMES` detections; two metric PIDs drive the sphere onto a radial setpoint at `APPROACH_TARGET_DISTANCE_M`. Step 2 (descent): same PIDs while descending at `APPROACH_DESCEND_VELOCITY` until `LIDAR ≤ WORK_ALTITUDE`. Stores `approach_bearing_unit` and `approach_image_offset`. |
-| SELECT_SIDE      | `select_side`   | [hook/states/select_hose_side.py](hook/states/select_hose_side.py)    | Decision-only (no movement). Sample `SIDE_SAMPLE_FRAMES` frames; lock rope long-axis from the most-confident `rose`; bucket each `rose` instance by sign of its centroid projection onto that axis from the sphere; pick side with greater accumulated long-axis length. Tie (`ratio < SIDE_LENGTH_RATIO`) → fallback to side anti-aligned with `approach_image_offset`. Stores `hose_side_image_unit` and `anchor_sign` (predicted from sign of `side_unit.x`). |
-| ORIENT_TO_HOOK   | `orient_to_hook`| [hook/states/orient_to_hook.py](hook/states/orient_to_hook.py)        | Sample-and-decide (`ORIENT_BEHIND_SAMPLE_FRAMES` frames): chosen-rope mask body-x = `-(hose_cy − IMAGE_CENTER_Y) / ppm`. SUCCEED immediately if median ≥ `−ORIENT_BEHIND_THRESHOLD_M` (rope already in front). Otherwise spin 180° using the sphere image-frame polar angle around image center: `theta_target = wrap_pi(theta_0 + π − ε)` (ε-bias gives deterministic CCW direction); single SDK PID on `wrap_pi(theta_current − theta_target)` outputs `vyaw` clipped to `±ORIENT_MAX_YAW_VELOCITY`. Converged after `ORIENT_CONFIRMATIONS` consecutive frames with `\|err\| < ORIENT_ANGLE_TOLERANCE_RAD`. On success negates `hose_side_image_unit` and `anchor_sign` on the blackboard so ALIGN/DESCEND see the post-flip body frame transparently. Sphere-loss tolerant (holds last `vyaw` for up to `ORIENT_MAX_LOST_FRAMES` frames). |
-| ALIGN            | `align`         | [hook/states/align_to_hose.py](hook/states/align_to_hose.py)          | Three SDK PIDs on metric errors: `vyaw` on hose long-axis angle (target 0° = horizontal); `vy` on sphere image-x with anchor offset (`SPHERE_ANCHOR_DISTANCE_M`); `vx` on hose image-y with target row offset by `ALIGN_STANDOFF_M` so the rope sits ahead of the hook. Yaw-first sub-phase: while `\|angle\| > ALIGN_YAW_FIRST_TOLERANCE_DEG` only `vyaw` runs (`vx = vy = 0`). Converged when all three errors stay below their tolerances for `HOSE_ALIGN_CONFIRMATIONS` frames. |
-| DESCEND          | `descend`       | [hook/states/descend.py](hook/states/descend.py)                      | Same three PIDs as ALIGN. Standoff linearly ramps from `ALIGN_STANDOFF_M` → 0 over `DESCEND_STANDOFF_RAMP_TICKS` ticks so the rope target slides under the hook smoothly. Sphere anchor disabled (`vy = 0`) once `target_sphere_cx` leaves the FOV margin (`DESCEND_SPHERE_TARGET_MARGIN_PX`); fallback hose pick uses the most-confident `rose` if the sphere is gone. Vertical command is altitude-proportional: `vz = -clip(DESCEND_VZ_KP·(alt − RELEASE_ALTITUDE), VZ_MIN, VZ_MAX)` with hard zero at and below the floor — lateral and yaw keep running. SUCCEED when `LIDAR ≤ RELEASE_ALTITUDE` AND lateral/angle errors under tolerance for `DESCEND_RELEASE_CONFIRMATIONS` frames. Aborts only on hose-loss. |
-| RELEASE          | `release`       | [hook/states/release_hook.py](hook/states/release_hook.py)            | Stop motion, drive `SERVO_CHANNEL` from `HOLD_PWM` to `RELEASE_PWM`. |
-| RETURN_TO_LAUNCH | (suffix)        | [hook/core/states.py](hook/core/states.py)                            | `drone.rtl(altitude=RTL_ALTITUDE, method=NAVIGATE, land=False)`. |
-| LAND             | (suffix)        | [hook/core/states.py](hook/core/states.py)                            | `drone.land()` then close camera. |
+| State            | Stage name        | File                                                                  | What it does |
+|------------------|-------------------|-----------------------------------------------------------------------|--------------|
+| INITIALIZE       | (prefix)          | [hook/core/states.py](hook/core/states.py)                            | Build `MavrosDrone` (SITL or GPS), open camera (`/down_camera/compressed` in sim, OpenCV otherwise), load segmentor, build per-class confidence filter. |
+| TAKEOFF          | (prefix)          | [hook/core/states.py](hook/core/states.py)                            | Arm + take off to `INITIAL_TAKEOFF_ALTITUDE`. |
+| SEARCH_ASCEND    | `search_ascend`   | [hook/states/search_and_ascend.py](hook/states/search_and_ascend.py)  | Hover, run segmentor; ascend at `ASCEND_VELOCITY` (capped at `MAX_ASCEND_ALTITUDE`) until `ASCENT_STOP_CONFIRMATIONS` consecutive sphere detections. |
+| APPROACH         | `approach`        | [hook/states/approach_sphere.py](hook/states/approach_sphere.py)      | Step 1 (lateral): capture bearing unit `(ux0, uy0)` over `APPROACH_INIT_BEARING_FRAMES` detections; two metric PIDs drive the sphere onto a radial setpoint at `APPROACH_TARGET_DISTANCE_M`. Step 2 (descent): same PIDs while descending at `APPROACH_DESCEND_VELOCITY` until `LIDAR ≤ WORK_ALTITUDE`. Stores `approach_bearing_unit` and `approach_image_offset`. |
+| SELECT_SIDE      | `select_side`     | [hook/states/select_hose_side.py](hook/states/select_hose_side.py)    | Decision-only (no movement). Sample `SIDE_SAMPLE_FRAMES` frames; lock rope long-axis from the most-confident `rose`; bucket each `rose` instance by sign of its centroid projection onto that axis from the sphere; pick side with greater accumulated long-axis length. Tie (`ratio < SIDE_LENGTH_RATIO`) → fallback to side anti-aligned with `approach_image_offset`. Stores `hose_side_image_unit` and `anchor_sign` (predicted from sign of `side_unit.x`). |
+| ORIENT_TO_HOOK   | `orient_to_hook`  | [hook/states/orient_to_hook.py](hook/states/orient_to_hook.py)        | Predictive yaw, vision-only. Sample `ORIENT_SAMPLE_FRAMES` good frames; per frame compute `Δ = predict_orient_yaw(side_unit, sphere_xy)` — the closest body yaw that makes the rope horizontal in image AND keeps the sphere in the upper half. Vector-mean across frames. If `\|Δ\| < ORIENT_SKIP_THRESHOLD_RAD`: SUCCEED with no rotation. Otherwise spin: PID on `wrap_pi(theta_current − theta_target)` where `theta_target = theta_initial + Δ` and `theta` is the sphere's image-frame polar angle around image center. Converges when `\|err\| < ORIENT_ANGLE_TOLERANCE_RAD` for `ORIENT_CONFIRMATIONS` frames. On success rotates `hose_side_image_unit` by the OBSERVED yaw delta (`theta_final − theta_initial`) and refreshes `anchor_sign` so `LOWER_AND_ALIGN` sees the post-spin body frame transparently. Sphere-loss tolerant (holds last `vyaw` for up to `ORIENT_MAX_LOST_FRAMES` frames). |
+| LOWER_AND_ALIGN  | `lower_and_align` | [hook/states/lower_and_align.py](hook/states/lower_and_align.py)      | Three image-frame PIDs (rope angle → `vyaw`; hose row → `vx`; sphere anchor → `vy`) plus altitude-proportional `vz` during the descent phase, all on the same controller stack. Three internal phases: `yaw` (only `vyaw` while `\|angle\| > ALIGN_YAW_FIRST_TOLERANCE_DEG`), `align` (full `(vx, vy, vyaw)` with `standoff = ALIGN_STANDOFF_M`, `vz = 0`; exits to descend after `HOSE_ALIGN_CONFIRMATIONS` ticks within tol), and `descend` (same controllers; standoff ramps `ALIGN_STANDOFF_M → 0` over `DESCEND_STANDOFF_RAMP_TICKS`; `vz = -clip(DESCEND_VZ_KP·(alt − RELEASE_ALTITUDE), VZ_MIN, VZ_MAX)` with hard zero at/below the floor; SUCCEED on `alt ≤ RELEASE_ALTITUDE` AND lateral/angle within tol for `DESCEND_RELEASE_CONFIRMATIONS` frames). Sphere-loss fallback (uniform across phases): if the sphere is missing OR `target_sphere_cx` leaves `[DESCEND_SPHERE_TARGET_MARGIN_PX, IMAGE_WIDTH − margin]`, the anchor PID is disabled (`vy = 0`, `anchor_ok = True`) and `pick_hose_by_dir` falls back to the most-confident `rose`. Sphere loss does NOT abort. Only chosen-hose loss for `LOWER_MAX_LOST_FRAMES` consecutive frames aborts. |
+| RELEASE          | `release`         | [hook/states/release_hook.py](hook/states/release_hook.py)            | Stop motion, drive `SERVO_CHANNEL` from `HOLD_PWM` to `RELEASE_PWM`. |
+| RETURN_TO_LAUNCH | (suffix)          | [hook/core/states.py](hook/core/states.py)                            | `drone.rtl(altitude=RTL_ALTITUDE, method=NAVIGATE, land=False)`. |
+| LAND             | (suffix)          | [hook/core/states.py](hook/core/states.py)                            | `drone.land()` then close camera. |
 
 ## APPROACH — radial setpoint, metric PIDs, safety
 
@@ -162,82 +164,121 @@ stateDiagram-v2
   at the drone target, green error arrow, top-left HUD with `alt`, `D`,
   `ppm`, error in m and px, and live `vx vy vz`.
 
-## ORIENT_TO_HOOK — break the 180° symmetry
+## ORIENT_TO_HOOK — predictive yaw to perpendicular-and-in-front
 
-ALIGN's three controllers are **180°-symmetric** about the chosen rope axis:
-rope angle = 0 (horizontal in image), `hose_cy = IMAGE_CENTER_Y − ALIGN_STANDOFF_M·ppm`
-(rope `ALIGN_STANDOFF_M` in front), and `sphere_cx = IMAGE_CENTER_X +
-anchor_sign·SPHERE_ANCHOR_DISTANCE_M·ppm` are all satisfied at *both* yaws —
-rope-in-front and rope-behind. When SELECT_SIDE leaves the drone facing the
-"wrong" 180° fixed point (chosen rope in image lower half, body x < 0), the
-center PID would drag the drone backward 1+ m **across** the rope to settle
-on the standoff target. This state pre-empts that with a yaw flip.
+`LOWER_AND_ALIGN`'s three controllers are **180°-symmetric** about the
+chosen rope axis: rope angle = 0 (horizontal in image),
+`hose_cy = IMAGE_CENTER_Y − ALIGN_STANDOFF_M·ppm` (rope
+`ALIGN_STANDOFF_M` in front), and
+`sphere_cx = IMAGE_CENTER_X + anchor_sign·SPHERE_ANCHOR_DISTANCE_M·ppm`
+are all satisfied at **both** yaws — rope-in-front AND rope-behind, and
+the rope-angle PID picks whichever rotation is shorter, which can leave
+the drone in the wrong half. This state computes the closest yaw that
+puts the rope perpendicular **and** in front, vision-only, in a single
+shot.
 
-- **Trigger.** Median over `ORIENT_BEHIND_SAMPLE_FRAMES` good frames of the
-  chosen rope (`pick_hose_by_dir(sphere, hoses, side_unit)`):
-
-  ```
-  rope_body_x = -(hose_cy - IMAGE_CENTER_Y) / px_per_meter(altitude, SPHERE_HEIGHT_M)
-  ```
-
-  Triggers the spin iff `rope_body_x < -ORIENT_BEHIND_THRESHOLD_M`
-  (default −0.10 m). Otherwise SUCCEED immediately — the working
-  `drone_yaw_deg=0` / `drone_yaw_deg=45` cases never enter the spin branch.
-
-- **Closed-loop reference.** The sphere is uniquely identified
-  (highest-confidence `sphere` instance), so its image-frame polar angle
-  around image center is the only signal that survives an arbitrary yaw
-  rotation without identity ambiguity:
+- **Predictive math** (closed-form, scale-invariant — see
+  [`predict_orient_yaw`](hook/core/perception.py)). Image-frame rotation
+  by Δ (positive = body CCW yaw) maps `(x, y)` to
+  `(cosΔ·x − sinΔ·y, sinΔ·x + cosΔ·y)`. Two yaw rotations make the rope
+  horizontal:
 
   ```
-  theta_0      = atan2(sy - IMAGE_CENTER_Y, sx - IMAGE_CENTER_X)
-  theta_target = wrap_pi(theta_0 + pi - 1e-3)   # eps-bias for deterministic CCW
-  err_rad      = wrap_pi(theta_current - theta_target)
-  vyaw         = pid_yaw.update(err_rad)        # PID setpoint=0 -> output ≈ -kp·err
+  Δ_a = -atan2(uy, ux)            # rope direction → +image-x
+  Δ_b = wrap_pi(Δ_a + π)          # rope direction → -image-x
   ```
 
-  At entry `err_rad ≈ -π+ε`, so `vyaw ≈ +ORIENT_MAX_YAW_VELOCITY` (positive
-  = CCW in FLU body). The 180°-flipped sphere image position is `(2·cx-sx,
-  2·cy-sy)`; its polar angle is exactly `theta_0 + π`, so the loop converges
-  to `err_rad → 0` after one body 180° yaw.
+  The rope passes through the sphere, so it ends up in the image upper
+  half iff `new_sy = sin(Δ)·dx + cos(Δ)·dy < 0`. The sign of that
+  expression at `Δ_a` discriminates which Δ to use:
+
+  ```
+  disc = sin(Δ_a)·dx + cos(Δ_a)·dy
+  Δ_target = Δ_a if disc < 0 else wrap_pi(Δ_a + π)
+  ```
+
+  No `ppm`, no altitude, no GPS — only sphere image position and rope
+  direction. Determinstic.
+
+- **Sample phase.** `ORIENT_SAMPLE_FRAMES` good frames (sphere AND chosen
+  rope visible). The chosen rope's `axis_unit` is sign-aligned with the
+  blackboard's `hose_side_image_unit` so the sign is consistent across
+  frames. Per frame `Δ` is computed by `predict_orient_yaw`. Vector-mean
+  over `(cosΔ, sinΔ)` yields a wrap-safe `Δ_target`.
+
+- **Skip path.** If `|Δ_target| < ORIENT_SKIP_THRESHOLD_RAD` (default
+  5°): SUCCEED with no rotation. `hose_side_image_unit` and
+  `anchor_sign` stay untouched. The working
+  `drone_yaw_deg ∈ {±90, −45}` cases for an in-front rope land here.
+
+- **Spin phase.** Sphere image-frame polar angle around image center is
+  the only signal that survives an arbitrary yaw rotation without
+  identity ambiguity (the sphere is uniquely identified):
+
+  ```
+  theta_initial = atan2(sy - IMAGE_CENTER_Y, sx - IMAGE_CENTER_X)
+  theta_target  = wrap_pi(theta_initial + Δ_target)
+  err_rad       = wrap_pi(theta_current - theta_target)
+  vyaw          = pid_yaw.update(err_rad)        # setpoint=0 -> output ≈ -kp·err
+  ```
+
+  Converges when `|err_rad| < ORIENT_ANGLE_TOLERANCE_RAD` for
+  `ORIENT_CONFIRMATIONS` consecutive frames.
 
 - **Sphere-loss robustness.** If `best_sphere` returns None for one tick,
-  the last commanded `vyaw` is held (open-loop continuation: angular
-  momentum is consistent across one missed frame). Aborts only after
-  `ORIENT_MAX_LOST_FRAMES` consecutive misses or `ORIENT_TIMEOUT` seconds.
-  Hose tracking is *not* required during the spin.
+  the last commanded `vyaw` is held. Aborts only after
+  `ORIENT_MAX_LOST_FRAMES` consecutive misses or `ORIENT_TIMEOUT`
+  seconds. Hose tracking is **not** required during the spin.
 
-- **Commit.** On convergence
-  (`|err_rad| < ORIENT_ANGLE_TOLERANCE_RAD` for `ORIENT_CONFIRMATIONS`
-  frames), atomically:
+- **Commit.** On convergence, the OBSERVED yaw delta is used (not the
+  commanded one — robust to the ±`ORIENT_ANGLE_TOLERANCE_RAD` PID
+  tolerance):
 
   ```python
-  blackboard["hose_side_image_unit"] = (-side_unit[0], -side_unit[1])
-  blackboard["anchor_sign"]          = -anchor_sign
+  delta_actual = wrap_pi(theta_final - theta_initial)
+  blackboard["hose_side_image_unit"] = R(delta_actual) @ side_unit
+  blackboard["anchor_sign"]          = anchor_sign_for_side(new_side_unit)
   ```
 
-  After a body 180° yaw the same physical rope appears extending in
-  `(-side_unit[0], -side_unit[1])` from the sphere, and the sphere appears
-  on the opposite image side, so both signs flip together.
-  `anchor_sign_for_side(new_side_unit)` returns the negated value, keeping
-  the algebraic invariant intact for ALIGN and DESCEND, which read both
-  values without modification.
+  This generalizes the old 180°-flip case (where Δ = π and the sign
+  negation falls out automatically) to any angle.
 
-- **Saved overlay** (per frame, `~/sae2026/<ts>/orient_to_hook/`): cyan `+`
-  at image center, red dot at live sphere, dashed yellow ray to the desired
-  sphere polar angle (`theta_target`), magenta ray to the live polar angle
-  (`theta_current`), yellow chosen-rope axis when available, HUD with
-  `phase` (`sample`/`spin`), `rope body_x`, `theta_curr`, `theta_tgt`,
-  `err_deg`, and commanded `vyaw`.
+- **Saved overlay** (per frame, `~/sae2026/<ts>/orient_to_hook/`): cyan
+  `+` at image center, red dot at live sphere, dashed yellow ray to
+  `theta_target`, magenta ray to `theta_current`, yellow chosen-rope
+  axis when available, HUD with `phase` (`sample`/`spin`),
+  `delta_target` (sample) or `theta_curr`/`theta_tgt`/`err_deg` (spin),
+  and commanded `vyaw`.
 
-## ALIGN / DESCEND — sphere-anchored stand-off
+## LOWER_AND_ALIGN — sphere-anchored stand-off + LIDAR descent
 
-ALIGN converges to a stand-off pose: the rope is held `ALIGN_STANDOFF_M` in
-front of the hook (image upper half), the sphere anchored at
-`SPHERE_ANCHOR_DISTANCE_M` from the hook along the chosen rope direction
-(image x offset = `anchor_sign · D`), and the drone yaw perpendicular to the
-rope (rope angle ~0°). DESCEND keeps the same three controllers and slides
-the standoff to 0 over `DESCEND_STANDOFF_RAMP_TICKS` ticks while descending.
+Single state, single PID stack, three internal phases. Replaces the
+previous separate `ALIGN_TO_HOSE` and `DESCEND_AND_ALIGN` states.
+
+- **Phase 1 (`yaw`).** While `|rope_angle| > ALIGN_YAW_FIRST_TOLERANCE_DEG`,
+  only `vyaw` runs and the position PIDs are reset. `hose_cy` and
+  `sphere_cx` are not geometrically meaningful until the rope is close
+  to horizontal.
+- **Phase 2 (`align`).** Full `(vx, vy, vyaw)` PIDs with
+  `standoff = ALIGN_STANDOFF_M`, `vz = 0`. The drone parks at a stand-off
+  pose where the rope is held `ALIGN_STANDOFF_M` in front of the hook
+  (image upper half), the sphere is anchored at `SPHERE_ANCHOR_DISTANCE_M`
+  from the hook along the chosen rope direction
+  (image x offset = `anchor_sign · D`), and the rope is horizontal in
+  image (drone perpendicular). Exits to phase 3 when angle/center/anchor
+  errors all stay within tolerance for `HOSE_ALIGN_CONFIRMATIONS` ticks.
+- **Phase 3 (`descend`).** Same controllers; `standoff` linearly ramps
+  `ALIGN_STANDOFF_M → 0` over `DESCEND_STANDOFF_RAMP_TICKS` ticks so the
+  rope target slides under the hook smoothly. Vertical command:
+
+  ```
+  vz = -clip(DESCEND_VZ_KP * (altitude - RELEASE_ALTITUDE),
+             DESCEND_VZ_MIN, DESCEND_VZ_MAX)        if altitude > RELEASE_ALTITUDE
+  vz = 0                                            otherwise
+  ```
+
+  SUCCEED on `altitude ≤ RELEASE_ALTITUDE` AND lateral/angle within
+  tolerance for `DESCEND_RELEASE_CONFIRMATIONS` frames.
 
 Wiring (image-to-body: `image -y → body +x`, `image +x → body -y`):
 
@@ -247,38 +288,22 @@ vy   ← pid_anchor.update((sphere_cx - target_sphere_cx) / ppm)
 vyaw ← pid_yaw.update(angle_deg)
 ```
 
-`anchor_sign` is **predicted** from `sign(side_unit.x)` after SELECT_SIDE
-chooses the closest perpendicular yaw (smaller of the two valid 90° rotations
-to keep the side direction's x-sign). No open-loop shift, no post-shift
-measurement; the sign is stored on the blackboard and reused by both states.
+`anchor_sign` is set in `SELECT_SIDE` from `sign(side_unit.x)` and
+refreshed by `ORIENT_TO_HOOK` after the yaw rotation. The merged state
+reads it without modification.
 
-The yaw-first sub-phase prevents `vx` and `vy` from acting on `hose_cy` /
-`sphere_cx` until the rope is close to horizontal in the image, since those
-signals are geometrically meaningless until then.
+**Sphere-loss fallback (uniform across all phases)** — what makes this
+robust to mid-mission detector drops:
 
-In DESCEND the sphere anchor is disabled once its target image-x falls
-outside `[DESCEND_SPHERE_TARGET_MARGIN_PX, IMAGE_WIDTH − margin]`. Below
-that altitude the drone has already aligned within the anchor tolerance;
-`vy = 0` and the FCU position-hold absorbs any micro-drift while the descent
-finishes on hose-only references. If the sphere is lost (so
-`pick_hose_by_dir` returns `None`) the chosen hose falls back to the
-most-confident `rose` instance — at low altitude the other rope is well
-outside the camera frustum so the remaining detection is necessarily the
-chosen one.
-
-Vertical command in DESCEND is proportional to altitude above the floor:
-
-```
-vz = -clip(DESCEND_VZ_KP * (altitude - RELEASE_ALTITUDE),
-           DESCEND_VZ_MIN, DESCEND_VZ_MAX)        if altitude > RELEASE_ALTITUDE
-vz = 0                                            otherwise
-```
-
-The hard floor is enforced even in the no-pose fallback. SUCCEED requires
-`altitude ≤ RELEASE_ALTITUDE` AND `centered AND angle_ok` for
-`DESCEND_RELEASE_CONFIRMATIONS` frames; the anchor gate is True whenever the
-sphere can't anchor, so DESCEND can finish without it. Only hose-loss
-(more than `DESCEND_MAX_LOST_FRAMES`) aborts.
+- If `best_sphere(result)` is `None` OR `target_sphere_cx` falls outside
+  `[DESCEND_SPHERE_TARGET_MARGIN_PX, IMAGE_WIDTH − margin]`: disable the
+  anchor PID, set `vy = 0`, mark `anchor_ok = True`.
+- The chosen rope falls back to the most-confident `rose` instance
+  (`hose_segments(result)[0]`) when `pick_hose_by_dir` returns None — at
+  low altitude the wrong rope is well outside the camera frustum, so the
+  remaining detection is necessarily the chosen one.
+- Sphere loss does **not** abort. Only chosen-rope loss for
+  `LOWER_MAX_LOST_FRAMES` consecutive frames aborts.
 
 ## Visualization
 
@@ -290,14 +315,15 @@ Every saved frame uses the shared composite drawers in
   black text. Replaces the SDK's default `draw_segmentations` whose default
   palette blends with the rope's red.
 - Per-state composite drawers (`draw_search_ascend`, `draw_select_side`,
-  `draw_align`, `draw_descend`) add controller geometry: image center (cyan
-  `+`), hook image projection (magenta `+`), detected hose axis (yellow
-  line), target hose row (green dashed line + tolerance band), target sphere
-  position (yellow ring + tilted cross, drawn red when out of FOV margin),
-  detected sphere centroid (red dot), error arrows, and a left HUD (state
-  + alt + ppm, errors in m and px, commanded velocities) plus a right HUD
-  (state-specific extras: `anchor_sign`, `standoff_m`, tolerances, release
-  altitude bar in DESCEND).
+  `draw_orient`, `draw_lower_and_align`) add controller geometry: image
+  center (cyan `+`), hook image projection (magenta `+`), detected hose
+  axis (yellow line), target hose row (green dashed line + tolerance
+  band), target sphere position (yellow ring + tilted cross, drawn red
+  when out of FOV margin), detected sphere centroid (red dot), error
+  arrows, the right-edge altitude bar with the release marker, and a
+  left HUD (state + phase + alt + ppm, errors in m and px, commanded
+  velocities) plus a right HUD (`anchor_sign`, `standoff_m`, tolerances,
+  release altitude).
 - APPROACH keeps its own bespoke radial-bearing overlay; the segmentation
   layer is the same `annotate_seg`.
 
@@ -316,7 +342,7 @@ Frames are saved every tick (no skipping) under
 ```
 
 Stage names (in mission order): `search_ascend`, `approach`, `select_side`,
-`orient_to_hook`, `align`, `descend`, `release`. A multi-name `--stages`
+`orient_to_hook`, `lower_and_align`, `release`. A multi-name `--stages`
 value must equal the first N of that list (no skipping; controllers depend
 on blackboard keys set by the previous stage).
 
@@ -378,9 +404,9 @@ ros2 launch hook sae_hook.launch.py drone_yaw_deg:=180 sphere_x:=3.5 sphere_y:=1
 ros2 launch hook sae_hook.launch.py drone_yaw_deg:=90 sphere_x:=-3.0
 HOOK_SIM=1 ros2 run hook mangalarga --stages search_ascend --end land
 
-# Stages 1-5, hover at end (no auto RTL/LAND) for inspection
+# Stages 1-4, hover at end (no auto RTL/LAND) for inspection
 ros2 launch hook sae_hook.launch.py drone_yaw_deg:=180 sphere_x:=2.5
-HOOK_SIM=1 ros2 run hook mangalarga --stages search_ascend,approach,select_side,orient_to_hook,align --end none
+HOOK_SIM=1 ros2 run hook mangalarga --stages search_ascend,approach,select_side,orient_to_hook --end none
 ```
 
 ## Package structure
@@ -401,9 +427,8 @@ hook/
       search_and_ascend.py
       approach_sphere.py
       select_hose_side.py
-      orient_to_hook.py
-      align_to_hose.py
-      descend.py
+      orient_to_hook.py       # predictive yaw (closest perpendicular + in-front)
+      lower_and_align.py      # merged stand-off align + LIDAR descent
       release_hook.py
   launch/
     sae_hook.launch.py        # Gazebo + MAVROS, drone/sphere pose CLI args
@@ -487,16 +512,20 @@ All in [hook/core/constants.py](hook/core/constants.py).
 ### ORIENT_TO_HOOK
 | Name | Value |
 |---|---|
-| `ORIENT_BEHIND_THRESHOLD_M` | 0.10 m |
-| `ORIENT_BEHIND_SAMPLE_FRAMES` | 8 |
+| `ORIENT_SAMPLE_FRAMES` | 6 |
+| `ORIENT_SKIP_THRESHOLD_RAD` | `math.radians(5.0)` |
 | `ORIENT_YAW_KP` | 0.6 rad/s per rad |
-| `ORIENT_MAX_YAW_VELOCITY` | 0.5 rad/s |
-| `ORIENT_ANGLE_TOLERANCE_RAD` | `math.radians(10.0)` |
-| `ORIENT_CONFIRMATIONS` | 4 |
-| `ORIENT_TIMEOUT` | 25.0 s |
+| `ORIENT_MAX_YAW_VELOCITY` | 0.42 rad/s |
+| `ORIENT_ANGLE_TOLERANCE_RAD` | `math.radians(12.0)` |
+| `ORIENT_CONFIRMATIONS` | 5 |
+| `ORIENT_TIMEOUT` | 65.0 s |
 | `ORIENT_MAX_LOST_FRAMES` | 60 |
 
-### ALIGN
+### LOWER_AND_ALIGN
+The merged state reuses one set of `HOSE_*` / `SPHERE_ANCHOR_*` PID gains
+in both `align` and `descend` phases (per the user's "same control"
+requirement); only the standoff target and `vz` change between phases.
+
 | Name | Value |
 |---|---|
 | `HOSE_MIN_CONTOUR_AREA` | 200 px² |
@@ -505,22 +534,14 @@ All in [hook/core/constants.py](hook/core/constants.py).
 | `SPHERE_ANCHOR_DISTANCE_M` / `SPHERE_ANCHOR_TOLERANCE_M` / `SPHERE_ANCHOR_KP` | 0.5 m / 0.055 m / 0.66 m/s/m |
 | `ALIGN_STANDOFF_M` | 0.30 m |
 | `ALIGN_YAW_FIRST_TOLERANCE_DEG` | 18.0° |
-| `HOSE_ALIGN_CONFIRMATIONS` | 8 |
-| `HOSE_ALIGN_TIMEOUT` | 100 s |
-| `HOSE_ALIGN_MAX_LOST_FRAMES` | 60 |
-
-### DESCEND
-| Name | Value |
-|---|---|
+| `HOSE_ALIGN_CONFIRMATIONS` | 8 (align→descend transition) |
+| `HOSE_ALIGN_TIMEOUT` | 100 s (align phase only) |
+| `LOWER_MAX_LOST_FRAMES` | 60 (counts ONLY chosen-rope losses) |
 | `DESCEND_VZ_KP` / `DESCEND_VZ_MIN` / `DESCEND_VZ_MAX` | 0.20 / 0.05 / 0.20 m/s |
-| `DESCEND_CENTER_KP` / `DESCEND_ANGLE_KP` / `DESCEND_ANCHOR_KP` | 0.65 m/s/m / 0.0088 rad/s/° / 0.60 m/s/m |
-| `DESCEND_MAX_VELOCITY_XY` / `DESCEND_MAX_YAW_VELOCITY` | 0.22 m/s / 0.30 rad/s |
-| `DESCEND_CENTER_TOLERANCE_M` / `DESCEND_ANGLE_TOLERANCE_DEG` / `DESCEND_ANCHOR_TOLERANCE_M` | 0.07 m / 5.0° / 0.068 m |
 | `DESCEND_STANDOFF_RAMP_TICKS` | 30 |
 | `DESCEND_SPHERE_TARGET_MARGIN_PX` | 100 |
 | `DESCEND_RELEASE_CONFIRMATIONS` | 5 |
-| `DESCEND_TIMEOUT` | 120 s |
-| `DESCEND_MAX_LOST_FRAMES` | 60 (counts ONLY hose losses) |
+| `DESCEND_TIMEOUT` | 120 s (descend phase only) |
 
 ### Servo
 | Name | Value |
@@ -543,15 +564,14 @@ All in [hook/core/constants.py](hook/core/constants.py).
 | Drone parks too close to sphere | raise `APPROACH_TARGET_DISTANCE_M` and/or `APPROACH_MIN_SAFE_DISTANCE_M`. |
 | APPROACH oscillates around the band | raise `APPROACH_TOL_M`; check `PID_MIN_OUTPUT_VELOCITY_XY` covers MAVROS noise. |
 | APPROACH slow at long range | raise `APPROACH_KP_M` and/or `APPROACH_MAX_VELOCITY_XY`. |
-| ALIGN never exits yaw-first | lower `ALIGN_YAW_FIRST_TOLERANCE_DEG` (more time in yaw-only) or raise it (switch to full sooner). |
-| ALIGN/DESCEND drift around the rope | raise `HOSE_CENTER_TOLERANCE_M` / `SPHERE_ANCHOR_TOLERANCE_M`; tune their `*_KP`. |
-| ORIENT_TO_HOOK fires when not needed (rope barely behind) | raise `ORIENT_BEHIND_THRESHOLD_M` (more behind required to trigger). |
-| ORIENT_TO_HOOK should fire but skips | lower `ORIENT_BEHIND_THRESHOLD_M` or check that `pick_hose_by_dir` consistently picks the chosen rope (sphere_conf, hose_conf). |
+| LOWER_AND_ALIGN never exits yaw-first | lower `ALIGN_YAW_FIRST_TOLERANCE_DEG` (more time in yaw-only) or raise it (switch to full sooner). |
+| LOWER_AND_ALIGN drifts around the rope | raise `HOSE_CENTER_TOLERANCE_M` / `SPHERE_ANCHOR_TOLERANCE_M`; tune their `*_KP`. |
+| ORIENT_TO_HOOK skips when it should spin | lower `ORIENT_SKIP_THRESHOLD_RAD` (default 5°). Verify `predict_orient_yaw` against the failing setup with `tools/visualize_orient.py`. |
 | ORIENT_TO_HOOK overshoots / oscillates near target | lower `ORIENT_YAW_KP` or `ORIENT_MAX_YAW_VELOCITY`; raise `ORIENT_ANGLE_TOLERANCE_RAD` if jitter near target prevents exit. |
 | ORIENT_TO_HOOK aborts on sphere loss | raise `ORIENT_MAX_LOST_FRAMES`; verify segmentor sphere recall under motion blur during fast yaw. |
-| DESCEND crosses the rope at the start | raise `DESCEND_STANDOFF_RAMP_TICKS` (slower ramp) or lower `DESCEND_CENTER_KP`. |
-| DESCEND too fast near release | lower `DESCEND_VZ_MIN` or `DESCEND_VZ_MAX`. |
-| Mission gives up too early during dropouts | raise `APPROACH_MAX_LOST_FRAMES` / `HOSE_ALIGN_MAX_LOST_FRAMES` / `DESCEND_MAX_LOST_FRAMES`. |
+| Descend phase crosses the rope at the start | raise `DESCEND_STANDOFF_RAMP_TICKS` (slower ramp) or lower `HOSE_CENTER_KP`. |
+| Descent too fast near release | lower `DESCEND_VZ_MIN` or `DESCEND_VZ_MAX`. |
+| Mission gives up too early during dropouts | raise `APPROACH_MAX_LOST_FRAMES` / `LOWER_MAX_LOST_FRAMES`. Sphere loss alone never aborts LOWER_AND_ALIGN; if you see one, the chosen rope is also gone. |
 
 ## Models
 

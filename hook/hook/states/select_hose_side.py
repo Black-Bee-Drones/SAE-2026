@@ -1,9 +1,10 @@
 """Decide which side of the sphere the drone should fly along.
 
 Decision-only state: no movement, no reacquire. After this state both
-``hose_side_image_unit`` and ``anchor_sign`` are on the blackboard, and
-the closed-loop controllers in :class:`AlignToHose` and
-:class:`DescendAndAlign` drive the drone to the stand-off pose.
+``hose_side_image_unit`` and ``anchor_sign`` are on the blackboard, then
+:class:`OrientToHook` may rotate the drone (refreshing both values) and
+:class:`LowerAndAlign` drives the drone to the stand-off pose and on
+through the LIDAR descent.
 
 Algorithm:
   1. Sample SIDE_SAMPLE_FRAMES frames; on the first usable frame, lock

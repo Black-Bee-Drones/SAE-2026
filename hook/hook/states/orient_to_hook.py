@@ -1,22 +1,21 @@
-"""Pre-rotate the drone so the chosen rope ends up in front of the hook.
+"""Pre-rotate the drone so the chosen rope ends up perpendicular to body
++x AND in front of the drone (image upper half).
 
-ALIGN's three PIDs (rope-angle / hose-row / sphere-anchor) are 180° symmetric
-about the chosen rope axis: rope-in-front and rope-behind are both fixed
-points. When SELECT_SIDE leaves the drone yawed such that the chosen rope
-is behind in body frame (rope mask centroid below image center), ALIGN's
-center PID would otherwise back the drone over the rope to drag the rope
-to the standoff target above center.
+Closed-loop body yaw, vision-only. After SELECT_SIDE we know the chosen
+rope's direction in image (``hose_side_image_unit``). The ``LOWER_AND_ALIGN``
+controllers downstream are 180°-symmetric: rope-in-front and rope-behind
+are both fixed points of the rope-angle PID, and the position PID then
+drags the drone backward across the rope when we land in the wrong half.
 
-This state breaks the symmetry by spinning the drone 180° using the sphere's
-image-frame polar angle around image center as the closed-loop reference.
-The sphere is uniquely identified (highest-confidence sphere instance), so
-the spin is robust to rope mis-identification mid-rotation. After the spin,
-``hose_side_image_unit`` and ``anchor_sign`` on the blackboard are negated
-so ALIGN/DESCEND see the new body frame transparently.
+This state breaks that symmetry by computing the closest yaw rotation
+``Δ_target`` such that, after applying it, the rope is horizontal in image
+AND the sphere ends up in the upper half (rope in front). Then it spins
+to that target using the sphere's image-frame polar angle as the only
+yaw-invariant feedback, and updates ``hose_side_image_unit`` /
+``anchor_sign`` to reflect the rotation so downstream states see the new
+body frame transparently.
 
-No-op when the chosen rope is already in front of the drone (median body-x
-over ``ORIENT_BEHIND_SAMPLE_FRAMES`` frames is above
-``-ORIENT_BEHIND_THRESHOLD_M``).
+See :func:`hook.core.perception.predict_orient_yaw` for the math.
 
 Image-to-body convention (down camera, FLU body):
     image -y -> body +x (forward)
@@ -27,7 +26,7 @@ import math
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import rclpy
@@ -38,7 +37,7 @@ from yasmin_ros.yasmin_node import YasminNode
 
 from nectar.ai.detection import PerClassConfidenceFilter
 from nectar.ai.segmentation import Segmentor
-from nectar.control import AltitudeSource, MavrosDrone, MoveReference, PIDController
+from nectar.control import MavrosDrone, MoveReference, PIDController
 from nectar.vision import ImageHandler
 
 from hook.core import overlay
@@ -47,23 +46,23 @@ from hook.core.constants import (
     IMAGE_CENTER_X,
     IMAGE_CENTER_Y,
     ORIENT_ANGLE_TOLERANCE_RAD,
-    ORIENT_BEHIND_SAMPLE_FRAMES,
-    ORIENT_BEHIND_THRESHOLD_M,
     ORIENT_CONFIRMATIONS,
     ORIENT_MAX_LOST_FRAMES,
     ORIENT_MAX_YAW_VELOCITY,
+    ORIENT_SAMPLE_FRAMES,
+    ORIENT_SKIP_THRESHOLD_RAD,
     ORIENT_TIMEOUT,
     ORIENT_YAW_KP,
     PID_MIN_OUTPUT_VYAW,
     SAVE_DETECTIONS,
-    SPHERE_HEIGHT_M,
 )
 from hook.core.perception import (
+    anchor_sign_for_side,
     best_sphere,
     hose_pose,
     hose_segments,
     pick_hose_by_dir,
-    px_per_meter,
+    predict_orient_yaw,
     run_seg,
 )
 
@@ -73,21 +72,45 @@ def _wrap_pi(angle: float) -> float:
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
+def _circular_mean(angles: List[float]) -> float:
+    """Vector mean over (cos, sin) of the input angles. Robust to wrap."""
+    s = sum(math.sin(a) for a in angles)
+    c = sum(math.cos(a) for a in angles)
+    return math.atan2(s, c)
+
+
+def _rotate_vec(
+    v: Tuple[float, float], delta: float
+) -> Tuple[float, float]:
+    """Rotate a 2D image-frame vector by ``delta`` (atan2 sense, image
+    y-down). Same convention as :func:`predict_orient_yaw`.
+    """
+    cosd, sind = math.cos(delta), math.sin(delta)
+    vx, vy = v
+    return (cosd * vx - sind * vy, sind * vx + cosd * vy)
+
+
 class OrientToHook(State):
-    """Pre-rotate so the chosen rope is in front of the drone.
+    """Predictive yaw to put the chosen rope perpendicular AND in front.
 
-    Sample-and-decide phase: median chosen-rope body-x over N frames; trigger
-    the 180° flip iff the rope is behind by more than
-    ``ORIENT_BEHIND_THRESHOLD_M``. Otherwise SUCCEED immediately.
+    Sample phase: collect ``ORIENT_SAMPLE_FRAMES`` good frames (sphere
+    AND chosen rope visible). Per-frame ``Δ_target = predict_orient_yaw``
+    using the rope's current image direction (axis_unit aligned with the
+    blackboard's ``hose_side_image_unit`` for sign consistency) and the
+    sphere image position. Vector-mean across frames -> ``Δ_total``.
 
-    Spin phase: closed loop on sphere image-frame polar angle around image
-    center, target = current_angle + pi (mirror image position). Stops when
+    If ``|Δ_total| < ORIENT_SKIP_THRESHOLD_RAD``: SUCCEED, leave
+    ``hose_side_image_unit`` / ``anchor_sign`` untouched.
+
+    Otherwise spin: closed loop on sphere image-frame polar angle around
+    image center, target = ``theta_initial + Δ_total``. PID setpoint=0,
+    feedback = ``wrap_pi(theta_current - theta_target)``. Stops when
     the wrapped error stays under ``ORIENT_ANGLE_TOLERANCE_RAD`` for
     ``ORIENT_CONFIRMATIONS`` consecutive frames.
 
-    Commit: negate ``hose_side_image_unit`` and ``anchor_sign`` on the
-    blackboard so ALIGN's ``pick_hose_by_dir`` correctly identifies the
-    original physical rope after the body 180° yaw.
+    Commit: rotate ``hose_side_image_unit`` by the OBSERVED yaw delta
+    (``theta_final - theta_initial``, the actual sphere-polar shift) and
+    derive the new ``anchor_sign``. Robust to PID convergence tolerance.
     """
 
     def __init__(self):
@@ -121,41 +144,43 @@ class OrientToHook(State):
             self.save_dir = Path(DETECTION_SAVE_PATH) / ts / "orient_to_hook"
             self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        sample = self._sample_decision(drone, camera, segmentor, class_filter, side_unit)
+        sample = self._sample_decision(camera, segmentor, class_filter, side_unit)
         if sample is None:
             yasmin.YASMIN_LOG_ERROR(
                 "OrientToHook: could not gather any usable sphere+rope sample."
             )
             return ABORT
 
-        rope_body_x_med, sphere_xy = sample
-        if rope_body_x_med >= -ORIENT_BEHIND_THRESHOLD_M:
+        delta_target, last_sphere_xy = sample
+
+        if abs(delta_target) < ORIENT_SKIP_THRESHOLD_RAD:
             yasmin.YASMIN_LOG_INFO(
-                f"OrientToHook: rope already in front "
-                f"(body_x={rope_body_x_med:+.3f}m >= "
-                f"-{ORIENT_BEHIND_THRESHOLD_M:.2f}m); skipping pre-rotation."
+                f"OrientToHook: rope already perpendicular and in front "
+                f"(|Δ|={math.degrees(abs(delta_target)):.1f}deg < "
+                f"{math.degrees(ORIENT_SKIP_THRESHOLD_RAD):.1f}deg); "
+                f"skipping pre-rotation."
             )
             return SUCCEED
 
-        sx, sy = sphere_xy
-        theta_0 = math.atan2(sy - IMAGE_CENTER_Y, sx - IMAGE_CENTER_X)
-        # Epsilon-bias the target so the wrapped error at entry is +(pi-eps),
-        # giving a deterministic CCW spin direction (positive vyaw in FLU).
-        # Without the bias, +pi and -pi alias and the initial sign is undefined.
-        theta_target = _wrap_pi(theta_0 + math.pi - 1e-3)
+        sx, sy = last_sphere_xy
+        theta_initial = math.atan2(sy - IMAGE_CENTER_Y, sx - IMAGE_CENTER_X)
+        theta_target = _wrap_pi(theta_initial + delta_target)
         yasmin.YASMIN_LOG_INFO(
-            f"OrientToHook: rope behind (body_x={rope_body_x_med:+.3f}m). "
-            f"Spinning 180°: theta_0={math.degrees(theta_0):+6.1f}° -> "
-            f"theta_target={math.degrees(theta_target):+6.1f}°."
+            f"OrientToHook: spinning Δ={math.degrees(delta_target):+6.1f}deg "
+            f"(theta_0={math.degrees(theta_initial):+6.1f}deg -> "
+            f"theta_target={math.degrees(theta_target):+6.1f}deg)."
         )
 
-        if not self._spin_to_target(
+        result = self._spin_to_target(
             drone, camera, segmentor, class_filter, theta_target, side_unit
-        ):
+        )
+        if result is None:
             return ABORT
+        theta_final = result
 
-        new_side_unit = (-side_unit[0], -side_unit[1])
-        new_anchor_sign = -anchor_sign
+        delta_actual = _wrap_pi(theta_final - theta_initial)
+        new_side_unit = _rotate_vec(side_unit, delta_actual)
+        new_anchor_sign = anchor_sign_for_side(new_side_unit)
         blackboard["hose_side_image_unit"] = new_side_unit
         blackboard["anchor_sign"] = new_anchor_sign
 
@@ -164,34 +189,34 @@ class OrientToHook(State):
         )
         yasmin.YASMIN_LOG_INFO(
             f"OrientToHook: spin complete. "
-            f"side_unit={side_unit}->{new_side_unit}, "
+            f"Δ_actual={math.degrees(delta_actual):+6.1f}deg, "
+            f"side_unit=({side_unit[0]:+.2f},{side_unit[1]:+.2f}) -> "
+            f"({new_side_unit[0]:+.2f},{new_side_unit[1]:+.2f}), "
             f"anchor_sign={anchor_sign:+d}->{new_anchor_sign:+d}."
         )
         return SUCCEED
 
     def _sample_decision(
         self,
-        drone,
         camera,
         segmentor,
         class_filter,
         side_unit,
     ) -> Optional[Tuple[float, Tuple[float, float]]]:
-        """Median rope body-x and the most recent sphere image position over
-        ``ORIENT_BEHIND_SAMPLE_FRAMES`` frames. Returns None if no valid
-        sphere+chosen-rope frame arrives within the timeout."""
-        body_xs = []
+        """Collect ``ORIENT_SAMPLE_FRAMES`` good frames and return
+        ``(delta_target, last_sphere_xy)`` or ``None`` on timeout.
+
+        Per frame: pick the chosen rope (``pick_hose_by_dir``), use its
+        ``axis_unit`` aligned with ``side_unit`` (sign-consistent), and
+        compute the per-frame ``Δ`` from sphere position + rope axis.
+        Vector-mean across frames yields a wrap-safe ``Δ_total``.
+        """
+        deltas: List[float] = []
         last_sphere_xy: Optional[Tuple[float, float]] = None
         deadline = time.time() + 5.0
 
-        while (
-            len(body_xs) < ORIENT_BEHIND_SAMPLE_FRAMES
-            and time.time() < deadline
-        ):
+        while len(deltas) < ORIENT_SAMPLE_FRAMES and time.time() < deadline:
             rclpy.spin_once(YasminNode.get_instance(), timeout_sec=0.05)
-            altitude = drone.get_altitude(AltitudeSource.LIDAR)
-            if altitude is None:
-                altitude = drone.get_altitude(AltitudeSource.AUTO)
 
             frame, result = run_seg(camera, segmentor, class_filter)
             sphere = best_sphere(result)
@@ -204,47 +229,47 @@ class OrientToHook(State):
                     phase="sample",
                     sphere_xy=sphere.center if sphere is not None else None,
                     pose=pose,
-                    rope_body_x=None,
+                    delta_target=None,
                     theta_current=None,
                     theta_target=None,
                     err_rad=None,
                     vyaw=0.0,
-                    sample_idx=len(body_xs),
+                    sample_idx=len(deltas),
                 )
                 time.sleep(0.05)
                 continue
 
-            ppm = px_per_meter(altitude, SPHERE_HEIGHT_M) if altitude else 0.0
-            if ppm <= 0.0:
-                time.sleep(0.05)
-                continue
+            sx, sy = sphere.center
+            _, _, _, _, axis_unit = pose
+            # Align axis_unit sign with side_unit (axis from minAreaRect has
+            # arbitrary sign; use the side direction as the sign reference).
+            if axis_unit[0] * side_unit[0] + axis_unit[1] * side_unit[1] < 0:
+                axis_unit = (-axis_unit[0], -axis_unit[1])
 
-            _, hose_cy, _, _, _ = pose
-            rope_body_x = -(hose_cy - IMAGE_CENTER_Y) / ppm
-            body_xs.append(rope_body_x)
-            last_sphere_xy = sphere.center
+            delta = predict_orient_yaw(axis_unit, (sx, sy))
+            deltas.append(delta)
+            last_sphere_xy = (sx, sy)
 
             self._save_overlay(
                 frame, result,
                 phase="sample",
                 sphere_xy=last_sphere_xy,
                 pose=pose,
-                rope_body_x=rope_body_x,
+                delta_target=delta,
                 theta_current=None,
                 theta_target=None,
                 err_rad=None,
                 vyaw=0.0,
-                sample_idx=len(body_xs),
+                sample_idx=len(deltas),
             )
 
             time.sleep(0.03)
 
-        if not body_xs or last_sphere_xy is None:
+        if not deltas or last_sphere_xy is None:
             return None
 
-        body_xs.sort()
-        median = body_xs[len(body_xs) // 2]
-        return median, last_sphere_xy
+        delta_target = _circular_mean(deltas)
+        return delta_target, last_sphere_xy
 
     def _spin_to_target(
         self,
@@ -254,14 +279,16 @@ class OrientToHook(State):
         class_filter,
         theta_target: float,
         side_unit: Tuple[float, float],
-    ) -> bool:
-        """Closed-loop spin. Holds last vyaw on transient sphere loss; aborts
-        after ``ORIENT_MAX_LOST_FRAMES`` consecutive misses or
-        ``ORIENT_TIMEOUT`` seconds."""
+    ) -> Optional[float]:
+        """Closed-loop spin. Returns the final ``theta_current`` on success,
+        or ``None`` on timeout / sphere-loss abort. Holds last vyaw on
+        transient sphere loss.
+        """
         confirmed = 0
         lost = 0
         last_vyaw = 0.0
         last_log = 0.0
+        last_theta = 0.0
         start = time.time()
 
         while time.time() - start < ORIENT_TIMEOUT:
@@ -279,7 +306,7 @@ class OrientToHook(State):
                     yasmin.YASMIN_LOG_ERROR(
                         f"OrientToHook: lost sphere for {lost} frames during spin."
                     )
-                    return False
+                    return None
                 drone.move_velocity(
                     vx=0.0, vy=0.0, vz=0.0, vyaw=last_vyaw,
                     reference=MoveReference.BODY,
@@ -289,7 +316,7 @@ class OrientToHook(State):
                     phase="spin",
                     sphere_xy=None,
                     pose=None,
-                    rope_body_x=None,
+                    delta_target=None,
                     theta_current=None,
                     theta_target=theta_target,
                     err_rad=None,
@@ -305,6 +332,7 @@ class OrientToHook(State):
             err_rad = _wrap_pi(theta_current - theta_target)
             vyaw = self.pid_yaw.update(err_rad)
             last_vyaw = vyaw
+            last_theta = theta_current
 
             drone.move_velocity(
                 vx=0.0, vy=0.0, vz=0.0, vyaw=vyaw, reference=MoveReference.BODY
@@ -317,7 +345,7 @@ class OrientToHook(State):
                 phase="spin",
                 sphere_xy=(sx, sy),
                 pose=pose,
-                rope_body_x=None,
+                delta_target=None,
                 theta_current=theta_current,
                 theta_target=theta_target,
                 err_rad=err_rad,
@@ -342,15 +370,19 @@ class OrientToHook(State):
                     drone.move_velocity(
                         0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY
                     )
-                    return True
+                    return theta_current
             else:
                 confirmed = 0
 
             time.sleep(0.03)
 
         drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
-        yasmin.YASMIN_LOG_ERROR("OrientToHook: spin timed out before reaching target.")
-        return False
+        yasmin.YASMIN_LOG_ERROR(
+            f"OrientToHook: spin timed out (last theta="
+            f"{math.degrees(last_theta):+6.1f}°, target="
+            f"{math.degrees(theta_target):+6.1f}°)."
+        )
+        return None
 
     def _save_overlay(
         self,
@@ -360,7 +392,7 @@ class OrientToHook(State):
         phase: str,
         sphere_xy: Optional[Tuple[float, float]],
         pose: Optional[Tuple[float, float, float, float, Tuple[float, float]]],
-        rope_body_x: Optional[float],
+        delta_target: Optional[float],
         theta_current: Optional[float],
         theta_target: Optional[float],
         err_rad: Optional[float],
@@ -376,15 +408,14 @@ class OrientToHook(State):
             phase=phase,
             sphere_xy=sphere_xy,
             hose_pose=pose,
-            rope_body_x=rope_body_x,
-            behind_threshold_m=ORIENT_BEHIND_THRESHOLD_M,
+            delta_target=delta_target,
             theta_current=theta_current,
             theta_target=theta_target,
             err_rad=err_rad,
             tol_rad=ORIENT_ANGLE_TOLERANCE_RAD,
             vyaw=vyaw,
             sample_idx=sample_idx,
-            sample_total=ORIENT_BEHIND_SAMPLE_FRAMES,
+            sample_total=ORIENT_SAMPLE_FRAMES,
         )
         self.frame_count += 1
         cv2.imwrite(

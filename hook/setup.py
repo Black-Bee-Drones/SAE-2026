@@ -26,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "mangalarga = hook.mangalarga:main",
+            "live_inference = hook.live_inference:main",
         ],
     },
 )

@@ -1,6 +1,5 @@
-from hook.states.align_to_hose import AlignToHose
 from hook.states.approach_sphere import ApproachSphere
-from hook.states.descend import DescendAndAlign
+from hook.states.lower_and_align import LowerAndAlign
 from hook.states.orient_to_hook import OrientToHook
 from hook.states.release_hook import ReleaseHook
 from hook.states.search_and_ascend import SearchAndAscend
@@ -11,8 +10,7 @@ STAGES = [
     ("approach", ApproachSphere),
     ("select_side", SelectHoseSide),
     ("orient_to_hook", OrientToHook),
-    ("align", AlignToHose),
-    ("descend", DescendAndAlign),
+    ("lower_and_align", LowerAndAlign),
     ("release", ReleaseHook),
 ]
 
@@ -22,7 +20,6 @@ __all__ = [
     "ApproachSphere",
     "SelectHoseSide",
     "OrientToHook",
-    "AlignToHose",
-    "DescendAndAlign",
+    "LowerAndAlign",
     "ReleaseHook",
 ]

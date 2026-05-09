@@ -251,3 +251,36 @@ def pick_hose_by_dir(
             best_score = score
             best = h
     return best
+
+
+def predict_orient_yaw(
+    side_unit: Tuple[float, float],
+    sphere_xy: Tuple[float, float],
+    image_center: Tuple[float, float] = (IMAGE_CENTER_X, IMAGE_CENTER_Y),
+) -> float:
+    """Closest body-yaw rotation that makes the chosen rope horizontal in
+    image AND keeps the sphere in the upper half (rope in front of drone).
+
+    Image-frame rotation by Δ (positive = body CCW yaw) maps a point
+    ``(x, y)`` to ``(cosΔ·x − sinΔ·y, sinΔ·x + cosΔ·y)``. Two yaw
+    rotations make the rope horizontal:
+
+    - ``Δ_a = -atan2(uy, ux)`` (rope direction → +image-x)
+    - ``Δ_b = wrap_pi(Δ_a + π)`` (rope direction → -image-x)
+
+    The rope passes through the sphere, so it ends up in the image upper
+    half iff ``new_sy = sin(Δ)·dx + cos(Δ)·dy < 0``. That sign
+    discriminates which Δ to use. Result is in ``(-π, π]``.
+
+    Scale-invariant: depends only on the sphere's image position relative
+    to image center, and the rope's image direction. No ``ppm``, no
+    altitude. Vision-only.
+    """
+    ux, uy = side_unit
+    sx, sy = sphere_xy
+    cx, cy = image_center
+    dx, dy = sx - cx, sy - cy
+    delta_a = math.atan2(-uy, ux)
+    disc = math.sin(delta_a) * dx + math.cos(delta_a) * dy
+    delta = delta_a if disc < 0 else delta_a + math.pi
+    return math.atan2(math.sin(delta), math.cos(delta))
