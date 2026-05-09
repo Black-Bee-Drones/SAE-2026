@@ -1,3 +1,6 @@
+import math
+import rclpy
+
 from rclpy.duration import Duration
 
 import yasmin
@@ -46,6 +49,10 @@ class PreciseLanding(State):
             output_limits=CONTROLER_OUTPUT_LIMITS_XY,
             integral_limits=CONTROLER_INTEGRAL_LIMITS_XY,
         )
+    
+    def ppm(self, altitude_m: float, fov_deg: float, width: float):
+        half_fov_rad = math.radians(fov_deg/2.0)
+        return width / (2.0 * altitude_m * math.tan(half_fov_rad))
 
 
     def execute(self, blackboard: Blackboard):
@@ -72,6 +79,7 @@ class PreciseLanding(State):
         start = self.node.get_clock().now()
         duration = Duration(seconds=PRECISE_TIMEOUT)
         while self.node.get_clock().now() - start < duration:
+            rclpy.spin_once(self.node, timeout_sec=0.1)
 
             if hover_count >= PRECISE_HOVER_COUNT:
                 yasmin.YASMIN_LOG_INFO(f'Completed successfully.')
@@ -109,17 +117,24 @@ class PreciseLanding(State):
             h, w = result.image.shape[:2]
             center = landing_base_number.center
 
-            error_x = (center[1] - (h / 2)) / drone.get_altitude()
-            error_y = (center[0] - (w / 2)) / drone.get_altitude()
+            alt = drone.get_altitude()
 
-            centralized = error_x ** 2 + error_y ** 2 <= PRECISE_ALING_TOLERANCE ** 2
+            error_x = (center[1] - (h / 2))
+            error_y = (center[0] - (w / 2))
+
+            error_x = error_x / self.ppm(alt, 86, w)
+            error_y = error_y / self.ppm(alt, 47, h)
+
+            ert_dig = math.hypot(error_x, error_y)
+
+            centralized = ert_dig <= PRECISE_ALING_TOLERANCE
             height_is_low = drone.get_altitude() <= PRECISE_LAND_ALTITUDE
 
             output_x = self.pid_x.update(error_x)
             output_y = self.pid_y.update(error_y)
             output_z = -PRECISE_VERTICAL_SPEED if (centralized and not height_is_low) else 0.0
 
-            yasmin.YASMIN_LOG_INFO(f'Detection: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
+            yasmin.YASMIN_LOG_INFO(f'Detection: alt={alt:.1f}, ert_dig={ert_dig:.2f}, error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
 
             if centralized and height_is_low:
                 hover_count += 1
