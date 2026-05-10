@@ -13,7 +13,7 @@ CAMERA_CONFIG = OpenCVConfig(
 )
 
 MODEL_DETECTOR_SOURCE = str(
-    Path(get_package_share_directory("bouncing")) / "models" / "best_detector.pt"
+    Path(get_package_share_directory("bouncing")) / "models" / "best_detector_5_class.pt"
 )
 MODEL_DETECTOR_CONFIDENCE_THRESHOLD = 0.5
 MODEL_CLASSIFIER_SOURCE = str(
