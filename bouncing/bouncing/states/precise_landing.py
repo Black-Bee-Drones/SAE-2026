@@ -1,6 +1,6 @@
 import math
-import rclpy
 
+import rclpy
 from rclpy.duration import Duration
 
 import yasmin
@@ -149,7 +149,7 @@ class PreciseLanding(State):
                 vyaw = 0.0,
             )
 
-        yasmin.YASMIN_LOG_INFO('Timeout.')
+        yasmin.YASMIN_LOG_ERROR('Timeout.')
         return TIMEOUT
 
 

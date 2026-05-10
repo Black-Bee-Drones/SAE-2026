@@ -21,14 +21,17 @@ MODEL_CLASSIFIER_SOURCE = str(
 )
 MODEL_CLASSIFIER_CONFIDENCE_THRESHOLD = 0.5
 
-TAKEOFF_ALTITUDE = 5.0  # m
+TAKEOFF_ALTITUDE = 1.0  # m
 
-SEARCH_NUMBER_DETECTIONS = 100
-SEARCH_FIND_TOLERANCE = 10
+SEARCH_FIND_TOLERANCE = 15
+SEARCH_LIMITE_ALTITUDE = 7.5  # m
+SEARCH_TARGET_ALTITUDE = 6.5  # m
+SEARCH_TIMEOUT = 3 * 60  # s
+SEARCH_VERTICAL_SPEED = 0.2  # m/s
 
-PRECISE_LIMITE_ALTITUDE = 7.0  # m
-PRECISE_HOVER_COUNT = 5  # number of consecutive detections to consider the landing successful
-PRECISE_RESET_PID = 2 #  number of detections lost to reset the PID controller
+PRECISE_LIMITE_ALTITUDE = 7.5  # m
+PRECISE_HOVER_COUNT = 10  # number of consecutive detections to consider the landing successful
+PRECISE_RESET_PID = 2  # number of detections lost to reset the PID controller
 PRECISE_LOST_TOLERANCE = 15
 PRECISE_TIMEOUT = 6 * 60  # s
 PRECISE_VERTICAL_SPEED = 0.1  # m/s
