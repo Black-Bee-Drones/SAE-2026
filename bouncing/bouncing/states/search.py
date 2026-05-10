@@ -1,3 +1,4 @@
+import math
 import cv2
 
 import rclpy
@@ -8,7 +9,7 @@ from yasmin_ros.yasmin_node import YasminNode
 from yasmin import State, Blackboard
 from yasmin_ros.basic_outcomes import SUCCEED, FAIL, TIMEOUT, ABORT
 
-from nectar.control import MavrosDrone
+from nectar.control import MavrosDrone, PIDController
 from nectar.vision import ImageHandler
 
 from bouncing.constants import (
@@ -17,6 +18,18 @@ from bouncing.constants import (
     SEARCH_TARGET_ALTITUDE,
     SEARCH_TIMEOUT,
     SEARCH_VERTICAL_SPEED,
+    SEARCH_POINTS,
+    SEARCH_PHOTOS_PER_POINT,
+    CONTROLER_P_XY,
+    CONTROLER_I_XY,
+    CONTROLER_D_XY,
+    CONTROLER_OUTPUT_LIMITS_XY,
+    CONTROLER_INTEGRAL_LIMITS_XY,
+    CONTROLER_P_Z,
+    CONTROLER_I_Z,
+    CONTROLER_D_Z,
+    CONTROLER_OUTPUT_LIMITS_Z,
+    CONTROLER_INTEGRAL_LIMITS_Z,
 )
 
 
@@ -24,6 +37,30 @@ class Search(State):
     def __init__(self):
         super().__init__(outcomes=[SUCCEED, FAIL, TIMEOUT, ABORT])
         self.node = YasminNode.get_instance()
+
+        self.pid_x = PIDController(
+            kp=CONTROLER_P_XY,
+            ki=CONTROLER_I_XY,
+            kd=CONTROLER_D_XY,
+            output_limits=CONTROLER_OUTPUT_LIMITS_XY,
+            integral_limits=CONTROLER_INTEGRAL_LIMITS_XY,
+        )
+
+        self.pid_y = PIDController(
+            kp=CONTROLER_P_XY,
+            ki=CONTROLER_I_XY,
+            kd=CONTROLER_D_XY,
+            output_limits=CONTROLER_OUTPUT_LIMITS_XY,
+            integral_limits=CONTROLER_INTEGRAL_LIMITS_XY,
+        )
+
+        self.pid_z = PIDController(
+            kp=CONTROLER_P_Z,
+            ki=CONTROLER_I_Z,
+            kd=CONTROLER_D_Z,
+            output_limits=CONTROLER_OUTPUT_LIMITS_Z,
+            integral_limits=CONTROLER_INTEGRAL_LIMITS_Z,
+        )
 
 
     def execute(self, blackboard: Blackboard):
@@ -39,16 +76,12 @@ class Search(State):
 
         yasmin.YASMIN_LOG_INFO('Start.')
 
-        target_base = {}
-        count = 0
+        count_to_next_point = 0
+        point_index = 0
         start = self.node.get_clock().now()
         duration = Duration(seconds=SEARCH_TIMEOUT)
         while self.node.get_clock().now() - start < duration:
             rclpy.spin_once(self.node, timeout_sec=0.1)
-
-            if count >= SEARCH_FIND_TOLERANCE:
-                yasmin.YASMIN_LOG_INFO('Completed successfully.')
-                return SUCCEED
 
             if drone.get_altitude() >= SEARCH_LIMITE_ALTITUDE:
                 yasmin.YASMIN_LOG_ERROR('Failed: limit altitude reached.')
@@ -56,45 +89,90 @@ class Search(State):
                 drone.delay(1.0)
                 return FAIL
 
-            drone.move_velocity(
-                vx = 0.0,
-                vy = 0.0,
-                vz = SEARCH_VERTICAL_SPEED if drone.get_altitude() < SEARCH_TARGET_ALTITUDE else 0.0,
-                vyaw = 0.0,
-            )
-
             result = image_handler.take_photo()
 
-            aruco, number = self.get_target_number(result)
-            if aruco is None or number is None:
-                yasmin.YASMIN_LOG_ERROR('Target NOT found.')
-                count = 0
-                continue
-            target_base['number'] = str(number)
+            target_base = self.get_target_base(self, result)
 
-            aruco_shape = self.get_aruco_shape(result, aruco)
-            if not aruco_shape:
-                yasmin.YASMIN_LOG_ERROR(f'Shape of aruco NOT found. Target number: {target_base["number"]}.')
-                count = 0
-                continue
+            if not target_base:
+                if not blackboard['target_base']:
+                    yasmin.YASMIN_LOG_ERROR('Target NOT found.')
 
-            target_base['shape'] = aruco_shape.class_name
-            if blackboard['target_base'] != target_base:
+            elif (blackboard['target_base'] != target_base):
                 yasmin.YASMIN_LOG_INFO(f'Target base: {target_base}.')
                 blackboard['target_base'] = target_base
-                count = 0
+                count_landind_base = 0
 
             landing_base_number = self.get_landing_base_number(target_base, result)
             if not landing_base_number:
                 yasmin.YASMIN_LOG_ERROR('Landing base NOT found.')
-                count = 0
-                continue
+            else:
+                count_landind_base += 1
+                yasmin.YASMIN_LOG_INFO(f'Landing base found ({count_landind_base}/{SEARCH_FIND_TOLERANCE}).')
+                if count_landind_base >= SEARCH_FIND_TOLERANCE:
+                    yasmin.YASMIN_LOG_INFO('Completed successfully.')
+                    return SUCCEED
 
-            count += 1
-            yasmin.YASMIN_LOG_INFO(f'Landing base found ({count}/{SEARCH_FIND_TOLERANCE}).')
+            if count_to_next_point >= SEARCH_PHOTOS_PER_POINT:
+                count_to_next_point = 0
+                point_index += 1
+                if point_index >= len(SEARCH_POINTS):
+                    point_index = 0
+
+                yasmin.YASMIN_LOG_INFO(f'Next point reached. x={SEARCH_POINTS[point_index]['x']}, y={SEARCH_POINTS[point_index]['y']}')
+                drone.move_to(
+                    SEARCH_POINTS[point_index]['x'] - SEARCH_POINTS[point_index-1]['x'],
+                    SEARCH_POINTS[point_index]['y'] - SEARCH_POINTS[point_index-1]['y'],
+                    0.0,
+                    0.0,
+                )
+
+            if (drone.get_altitude() >= SEARCH_TARGET_ALTITUDE):
+                count_to_next_point += 1
+
+            if SEARCH_POINTS[point_index]['x'] == 0.0 and SEARCH_POINTS[point_index]['y'] == 0.0:
+                error_x, error_y = self.get_takeoff_base_error(result, drone.get_altitude())
+            else:
+                error_x = 0.0
+                error_y = 0.0
+
+            drone.move_velocity(
+                vx = self.pid_x.update(error_x) if (error_x == 0.0) else 0.0,
+                vy = self.pid_y.update(error_y) if (error_y == 0.0) else 0.0,
+                vz = SEARCH_VERTICAL_SPEED if drone.get_altitude() < SEARCH_TARGET_ALTITUDE else 0.0,
+                vyaw = 0.0,
+            )
 
         yasmin.YASMIN_LOG_ERROR('Timeout.')
         return TIMEOUT
+    
+    def get_target_base(self, result):
+        target_base = {}
+        aruco, number = self.get_target_number(result)
+        if aruco is None or number is None:
+            return None
+        target_base['number'] = str(number)
+
+        aruco_shape = self.get_aruco_shape(result, aruco)
+        if not aruco_shape:
+            return None
+        target_base['shape'] = aruco_shape.class_name
+        return target_base
+
+    def get_takeoff_base_error(self, result, alt):
+        center = result.filter_by_id(['7'])
+        if  center:
+            h, w = result.image.shape[:2]
+
+            center[0].center
+
+            error_x = (center[1] - (h / 2))
+            error_y = (center[0] - (w / 2))
+
+            error_x = error_x / self.ppm(alt, 86, w)
+            error_y = error_y / self.ppm(alt, 47, h)
+
+            return error_x, error_y
+        return 0.0, 0.0
 
     def get_aruco_shape(self, result, aruco):
         aruco_shapes = []
