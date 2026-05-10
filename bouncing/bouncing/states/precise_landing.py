@@ -13,6 +13,7 @@ from nectar.vision import ImageHandler
 
 from bouncing.constants import (
     PRECISE_LIMITE_ALTITUDE,
+    PRECISE_LIMITE_RECOVERY,
     PRECISE_HOVER_COUNT,
     PRECISE_RESET_PID,
     PRECISE_LOST_TOLERANCE,
@@ -104,6 +105,11 @@ class PreciseLanding(State):
                     yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LOST_TOLERANCE}).')
 
                 else:
+                    if drone.get_altitude() >= PRECISE_LIMITE_RECOVERY:
+                        yasmin.YASMIN_LOG_ERROR('Recovery: Limit.')
+                        drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                        continue
+
                     yasmin.YASMIN_LOG_ERROR('Recovery: It lost detection many times.')
                     drone.move_velocity(vz=PRECISE_VERTICAL_SPEED)
 
@@ -160,7 +166,7 @@ class PreciseLanding(State):
         for n in result.filter_by_class([target_base['number']]):
             valid_number = True
             for s in result.filter_by_class(['0', '1', '2']):
-                if ((s.area / area_img) <= 0.6):
+                if ((s.area / area_img) >= 0.6):
                     continue
 
                 if (s.class_name == target_base['shape']):

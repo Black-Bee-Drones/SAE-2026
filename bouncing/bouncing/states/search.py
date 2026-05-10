@@ -90,8 +90,8 @@ class Search(State):
                 count = 0
                 continue
 
-            yasmin.YASMIN_LOG_INFO(f'Landing base found ({count}/{SEARCH_FIND_TOLERANCE}).')
             count += 1
+            yasmin.YASMIN_LOG_INFO(f'Landing base found ({count}/{SEARCH_FIND_TOLERANCE}).')
 
         yasmin.YASMIN_LOG_ERROR('Timeout.')
         return TIMEOUT
@@ -127,7 +127,7 @@ class Search(State):
             n = self.get_number_of_aruco(crop)
 
             if not n:
-                return None
+                return None, None
 
             if n % 3 == 0:
                 return d, 3
@@ -169,10 +169,11 @@ class Search(State):
         landing_bases = []
         for n in result.filter_by_class([target_base['number']]):
             for s in result.filter_by_class(['0', '1', '2']):
-                if ((s.area / area_img) <= 0.6):
+                if ((s.area / area_img) >= 0.6):
                     continue
 
                 if (s.class_name == target_base['shape']):
+                    yasmin.YASMIN_LOG_INFO(f'mesmo shape')
                     if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
                         landing_bases.append(n)
 
