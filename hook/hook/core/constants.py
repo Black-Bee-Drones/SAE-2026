@@ -1,6 +1,7 @@
 import math
 import os
 
+import numpy as np
 from ament_index_python.packages import get_package_share_directory
 
 # --- Altitude (meters) ---
@@ -40,6 +41,25 @@ CAMERA_TO_HOOK_BODY_Y_M = 0.10  # hook 10 cm to the left of camera
 # Used by px_per_meter_x / px_per_meter_y to remove the parallax error
 # (target plane height instead of the ground plane).
 SPHERE_HEIGHT_M = 1.7  # sphere mounted on hose at top of supports
+
+# Pixel <-> meter conversion strategy. Selects one of three implementations
+# in :mod:`hook.core.camera_scaling`:
+#   "fov"       - per-axis from HFOV/VFOV. Default. No calibration needed.
+#   "efl"       - isotropic pinhole from EFL_mm and pixel pitch.
+#   "intrinsic" - calibrated K + distortion. Replace the placeholder values
+#                 below with cv2.calibrateCamera output, then switch.
+CAMERA_SCALING_METHOD = "fov"
+CAMERA_EFL_MM = 3.9
+CAMERA_PIXEL_SIZE_UM = 2.9
+CAMERA_INTRINSIC_K = np.array(
+    [
+        [CAMERA_EFL_MM * 1000.0 / CAMERA_PIXEL_SIZE_UM, 0.0, IMAGE_CENTER_X],
+        [0.0, CAMERA_EFL_MM * 1000.0 / CAMERA_PIXEL_SIZE_UM, IMAGE_CENTER_Y],
+        [0.0, 0.0, 1.0],
+    ],
+    dtype=np.float64,
+)
+CAMERA_INTRINSIC_DIST = np.zeros(5, dtype=np.float64)
 
 # Segmentation model
 SEG_MODEL_PATH = os.path.join(

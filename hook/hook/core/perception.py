@@ -4,14 +4,10 @@ Image-to-body axis convention (down camera, body FLU):
     image -y (up)    -> body +x (forward)
     image +x (right) -> body -y (right)
 
-Pixels-per-meter is **anisotropic**: ``HORIZONTAL_FOV_DEG`` and
-``IMAGE_WIDTH`` give the rate for image-x ↔ body-y conversions, and
-``VERTICAL_FOV_DEG`` and ``IMAGE_HEIGHT`` give the rate for image-y ↔
-body-x conversions. The two values disagree because the IMX662 wide-angle
-lens does not satisfy a single-focal-length pinhole at the corners; the
-advertised FOVs are corner-to-corner. We use one ppm per axis as the
-internally-consistent approximation a-la-pinhole-near-the-center, until
-a real intrinsic calibration is available.
+Pixels-per-meter is delegated to a :class:`hook.core.camera_scaling.CameraScaling`
+singleton selected by the ``CAMERA_SCALING_METHOD`` constant. Three
+implementations are available (FOV, EFL, intrinsic-calibrated); see
+:mod:`hook.core.camera_scaling` for the contract and trade-offs.
 """
 
 from __future__ import annotations
@@ -31,23 +27,20 @@ from nectar.ai.segmentation import (
 )
 from nectar.vision import ImageHandler
 
+from hook.core.camera_scaling import get_camera_scaling
 from hook.core.constants import (
     CAMERA_TO_HOOK_BODY_X_M,
     CAMERA_TO_HOOK_BODY_Y_M,
     HOSE_CLASS,
-    HORIZONTAL_FOV_DEG,
     HOSE_MIN_CONTOUR_AREA,
     IMAGE_CENTER_X,
     IMAGE_CENTER_Y,
-    IMAGE_HEIGHT,
-    IMAGE_WIDTH,
     SEG_IMGSZ,
     SEG_IOU,
     SEG_PREDICT_CONF,
     SPHERE_ANCHOR_DISTANCE_M,
     SPHERE_CLASS,
     SPHERE_HEIGHT_M,
-    VERTICAL_FOV_DEG,
 )
 
 
@@ -153,47 +146,17 @@ def hose_pose(
 def px_per_meter_x(
     altitude_m: Optional[float], target_height_m: float = 0.0
 ) -> float:
-    """Pixels per meter along **image-x** (== body-y in down-camera FLU).
-
-    Derived from ``HORIZONTAL_FOV_DEG`` and ``IMAGE_WIDTH``. Use this
-    factor when converting:
-
-    - image-x distances to body-y meters (and vice versa).
-    - target distances along the body-y axis to image-x pixels.
-
-    See also :func:`px_per_meter_y` for the image-y (body-x) factor.
-    """
-    if altitude_m is None:
-        return 0.0
-    depth = altitude_m - target_height_m
-    if depth <= 0.0:
-        return 0.0
-    half_fov_rad = math.radians(HORIZONTAL_FOV_DEG / 2.0)
-    return IMAGE_WIDTH / (2.0 * depth * math.tan(half_fov_rad))
+    """Pixels per meter along image-x (== body-y). Delegates to the active
+    :class:`CameraScaling`."""
+    return get_camera_scaling().ppm_x(altitude_m, target_height_m)
 
 
 def px_per_meter_y(
     altitude_m: Optional[float], target_height_m: float = 0.0
 ) -> float:
-    """Pixels per meter along **image-y** (== body-x in down-camera FLU).
-
-    Derived from ``VERTICAL_FOV_DEG`` and ``IMAGE_HEIGHT``. Use this
-    factor when converting:
-
-    - image-y distances to body-x meters (the lateral hose-row error
-      that drives ``vx`` in :class:`LowerAndAlign`).
-    - target distances along the body-x axis (e.g. ``ALIGN_STANDOFF_M``
-      keeping the rope ahead of the hook) to image-y pixels.
-
-    See also :func:`px_per_meter_x` for the image-x (body-y) factor.
-    """
-    if altitude_m is None:
-        return 0.0
-    depth = altitude_m - target_height_m
-    if depth <= 0.0:
-        return 0.0
-    half_fov_rad = math.radians(VERTICAL_FOV_DEG / 2.0)
-    return IMAGE_HEIGHT / (2.0 * depth * math.tan(half_fov_rad))
+    """Pixels per meter along image-y (== body-x). Delegates to the active
+    :class:`CameraScaling`."""
+    return get_camera_scaling().ppm_y(altitude_m, target_height_m)
 
 
 def image_offset_to_body(
@@ -201,25 +164,16 @@ def image_offset_to_body(
     altitude_m: Optional[float],
     target_height_m: float = 0.0,
 ) -> Tuple[float, float]:
-    """Deproject an ``(image_dx, image_dy)`` from image center to the
-    body-frame ``(body_x_m, body_y_m)`` of the corresponding ground point.
-
-    The down-camera convention is ``image -y -> body +x`` and
-    ``image +x -> body -y``, so
-
-    .. code-block:: text
-
-        body_x_m = -image_dy / ppm_y
-        body_y_m = -image_dx / ppm_x
-
-    Returns ``(0.0, 0.0)`` if altitude is missing or below ``target_height_m``.
+    """Deproject ``(image_dx, image_dy)`` from image center to body-frame
+    ``(body_x_m, body_y_m)``. Delegates to the active :class:`CameraScaling`,
+    so :class:`IntrinsicScaling` removes lens distortion at the corners
+    while :class:`FOVScaling` / :class:`EFLScaling` apply the closed-form
+    pinhole deprojection.
     """
-    ppm_x = px_per_meter_x(altitude_m, target_height_m)
-    ppm_y = px_per_meter_y(altitude_m, target_height_m)
-    if ppm_x <= 0.0 or ppm_y <= 0.0:
-        return (0.0, 0.0)
     dx, dy = image_offset
-    return (-dy / ppm_y, -dx / ppm_x)
+    return get_camera_scaling().image_offset_to_body(
+        dx, dy, altitude_m, target_height_m
+    )
 
 
 def hook_image_offset(
@@ -227,13 +181,13 @@ def hook_image_offset(
 ) -> Tuple[float, float]:
     """Pixel offset ``(dx, dy)`` from image center to where the hook
     projects onto the depth plane at height ``target_height_m``.
-
-    Anisotropic: image-x uses ``ppm_x`` (body-y → image-x), image-y uses
-    ``ppm_y`` (body-x → image-y).
     """
-    ppm_x = px_per_meter_x(altitude_m, target_height_m)
-    ppm_y = px_per_meter_y(altitude_m, target_height_m)
-    return (-CAMERA_TO_HOOK_BODY_Y_M * ppm_x, -CAMERA_TO_HOOK_BODY_X_M * ppm_y)
+    return get_camera_scaling().body_offset_to_image(
+        CAMERA_TO_HOOK_BODY_X_M,
+        CAMERA_TO_HOOK_BODY_Y_M,
+        altitude_m,
+        target_height_m,
+    )
 
 
 def image_bearing_to_body_unit(

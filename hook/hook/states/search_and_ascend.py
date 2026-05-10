@@ -1,10 +1,8 @@
 import time
 
-import rclpy
 import yasmin
 from yasmin import Blackboard, State
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
-from yasmin_ros.yasmin_node import YasminNode
 
 from nectar.ai.detection import PerClassConfidenceFilter
 from nectar.ai.segmentation import Segmentor
@@ -44,7 +42,6 @@ class SearchAndAscend(State):
         start_time = time.time()
 
         while time.time() - start_time < ASCENT_TIMEOUT:
-            rclpy.spin_once(YasminNode.get_instance(), timeout_sec=0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)

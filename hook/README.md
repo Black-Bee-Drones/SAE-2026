@@ -370,6 +370,62 @@ The shared output object is [`FrameSink`](hook/core/frame_sink.py): each
 state creates one with its own ``prefix`` and calls ``sink.emit(frame)``,
 which does both ``cv2.imwrite`` and ``publisher.publish``.
 
+## Camera scaling (px <-> m)
+
+Pixel <-> meter conversion lives behind the `CameraScaling` interface in
+[hook/core/camera_scaling.py](hook/core/camera_scaling.py). Three
+implementations are available; all four perception entry points
+(`px_per_meter_x`, `px_per_meter_y`, `image_offset_to_body`,
+`hook_image_offset`) delegate to the active singleton, so swapping
+methods is a one-line constant change.
+
+| `CAMERA_SCALING_METHOD` | Class | What it uses | Where it's right |
+|---|---|---|---|
+| `"fov"` (default) | `FOVScaling` | `HORIZONTAL_FOV_DEG` + `IMAGE_WIDTH` for `ppm_x`; `VERTICAL_FOV_DEG` + `IMAGE_HEIGHT` for `ppm_y`. Anisotropic. | Inner ~30% of the image. No calibration needed. |
+| `"efl"` | `EFLScaling` | `f_px = CAMERA_EFL_MM * 1000 / CAMERA_PIXEL_SIZE_UM`. Same value on both axes (square pixels). | Image center; closer to the paraxial truth than `fov`. No calibration needed. |
+| `"intrinsic"` | `IntrinsicScaling` | Calibrated `K` matrix and distortion vector loaded from `CAMERA_INTRINSIC_K` / `CAMERA_INTRINSIC_DIST`. `cv2.undistortPoints` deprojects pixels to body. | Whole frame, including corners. Requires a one-time chessboard calibration. |
+
+The `intrinsic` placeholders default to `f_px = EFL_mm·1000/pixel_um`
+with zero distortion (i.e. equivalent to `efl` until you replace them
+with real calibration output), so switching to `"intrinsic"` is safe at
+any time — it just provides no extra accuracy until calibrated.
+
+After running ROS `camera_calibration` (or `cv2.calibrateCamera`) on
+the actual lens, paste the resulting `K` and distortion coefficients
+into [hook/core/constants.py](hook/core/constants.py):
+
+```python
+CAMERA_INTRINSIC_K = np.array([
+    [fx,  0, cx],
+    [ 0, fy, cy],
+    [ 0,  0,  1],
+], dtype=np.float64)
+CAMERA_INTRINSIC_DIST = np.array([k1, k2, p1, p2, k3], dtype=np.float64)
+CAMERA_SCALING_METHOD = "intrinsic"
+```
+
+### Live evaluator
+
+Hover the drone over a known target (sphere on the rope at 1.7 m, marker
+on the floor) and run the evaluator alongside the mission. It runs the
+segmentor on every camera frame and, for every detection, prints the
+estimated body-frame `(body_x, body_y)` from **all three** methods on
+the same image, color-coded — so you can read which line matches the
+tape-measured ground truth.
+
+```bash
+# floor objects
+ros2 run hook scaling_evaluator
+# sphere on the hose
+ros2 run hook scaling_evaluator --ros-args -p target_height_m:=1.7
+# watch
+ros2 run rqt_image_view rqt_image_view /hook/scaling_eval/compressed
+```
+
+Subscribes to `/mavros/rangefinder/rangefinder` for altitude (override
+with `-p rangefinder_topic:=...`); HUD shows altitude, depth, and the
+`(ppm_x, ppm_y)` produced by each method.
+
 ## Mission entry point
 
 `ros2 run hook mangalarga` parses an argparse CLI on `sys.argv` (after
@@ -659,3 +715,4 @@ Declared in [package.xml](package.xml):
 
 - [SAE Eletroquad 2026 rules](../Regulamento_EletroQuad_2026_portugues.pdf)
 - [Nectar SDK README](https://github.com/Black-Bee-Drones/nectar-sdk/blob/main/README.md)
+- [Executor-safe spin fix results](docs/EXECUTOR_FIX_RESULTS.md) — empirical Pattern A / Pattern B verification of the SDK's `BaseDrone._wait` helper that lets the hook state loops run without per-iter `rclpy.spin_once`

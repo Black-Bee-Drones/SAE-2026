@@ -42,11 +42,9 @@ See :func:`hook.core.perception.px_per_meter_x` /
 import time
 from typing import Tuple
 
-import rclpy
 import yasmin
 from yasmin import Blackboard, State
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
-from yasmin_ros.yasmin_node import YasminNode
 
 from nectar.ai.detection import PerClassConfidenceFilter
 from nectar.ai.segmentation import Segmentor
@@ -162,7 +160,6 @@ class LowerAndAlign(State):
                 yasmin.YASMIN_LOG_ERROR("LowerAndAlign: descend phase timed out.")
                 return ABORT
 
-            rclpy.spin_once(YasminNode.get_instance(), timeout_sec=0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)

@@ -27,6 +27,7 @@ setup(
         "console_scripts": [
             "mangalarga = hook.mangalarga:main",
             "live_inference = hook.live_inference:main",
+            "scaling_evaluator = hook.scaling_evaluator:main",
         ],
     },
 )

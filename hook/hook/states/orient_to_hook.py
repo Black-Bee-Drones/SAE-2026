@@ -33,11 +33,9 @@ import math
 import time
 from typing import List, Optional, Tuple
 
-import rclpy
 import yasmin
 from yasmin import Blackboard, State
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
-from yasmin_ros.yasmin_node import YasminNode
 
 from nectar.ai.detection import PerClassConfidenceFilter
 from nectar.ai.segmentation import Segmentor
@@ -206,7 +204,6 @@ class OrientToHook(State):
         deadline = time.time() + 5.0
 
         while len(deltas) < ORIENT_SAMPLE_FRAMES and time.time() < deadline:
-            rclpy.spin_once(YasminNode.get_instance(), timeout_sec=0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)
@@ -289,7 +286,6 @@ class OrientToHook(State):
         start = time.time()
 
         while time.time() - start < ORIENT_TIMEOUT:
-            rclpy.spin_once(YasminNode.get_instance(), timeout_sec=0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)

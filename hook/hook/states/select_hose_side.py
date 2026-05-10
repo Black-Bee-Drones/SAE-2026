@@ -19,11 +19,9 @@ Algorithm:
 import time
 from typing import Optional, Tuple
 
-import rclpy
 import yasmin
 from yasmin import Blackboard, State
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
-from yasmin_ros.yasmin_node import YasminNode
 
 from nectar.ai.detection import PerClassConfidenceFilter
 from nectar.ai.segmentation import Segmentor
@@ -92,7 +90,6 @@ class SelectHoseSide(State):
         start = time.time()
 
         while collected < SIDE_SAMPLE_FRAMES and time.time() - start < SIDE_TIMEOUT:
-            rclpy.spin_once(YasminNode.get_instance(), timeout_sec=0.05)
             frame, result = run_seg(camera, segmentor, class_filter)
             sphere = best_sphere(result)
             hoses = hose_segments(result)
