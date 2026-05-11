@@ -62,6 +62,11 @@ class Search(State):
             integral_limits=CONTROLER_INTEGRAL_LIMITS_Z,
         )
 
+    
+    def ppm(self, altitude_m: float, fov_deg: float, width: float):
+        half_fov_rad = math.radians(fov_deg/2.0)
+        return width / (2.0 * altitude_m * math.tan(half_fov_rad))
+
 
     def execute(self, blackboard: Blackboard):
         if ('drone' not in blackboard) or not blackboard['drone']:
@@ -91,7 +96,7 @@ class Search(State):
 
             result = image_handler.take_photo()
 
-            target_base = self.get_target_base(self, result)
+            target_base = self.get_target_base(result)
 
             if not target_base:
                 if not blackboard['target_base']:
@@ -102,15 +107,17 @@ class Search(State):
                 blackboard['target_base'] = target_base
                 count_landind_base = 0
 
-            landing_base_number = self.get_landing_base_number(target_base, result)
-            if not landing_base_number:
-                yasmin.YASMIN_LOG_ERROR('Landing base NOT found.')
-            else:
-                count_landind_base += 1
-                yasmin.YASMIN_LOG_INFO(f'Landing base found ({count_landind_base}/{SEARCH_FIND_TOLERANCE}).')
-                if count_landind_base >= SEARCH_FIND_TOLERANCE:
-                    yasmin.YASMIN_LOG_INFO('Completed successfully.')
-                    return SUCCEED
+            if blackboard['target_base']:
+                landing_base_number = self.get_landing_base_number(blackboard['target_base'], result)
+
+                if not landing_base_number:
+                    yasmin.YASMIN_LOG_ERROR('Landing base NOT found.')
+                else:
+                    count_landind_base += 1
+                    yasmin.YASMIN_LOG_INFO(f'Landing base found ({count_landind_base}/{SEARCH_FIND_TOLERANCE}).')
+                    if count_landind_base >= SEARCH_FIND_TOLERANCE:
+                        yasmin.YASMIN_LOG_INFO('Completed successfully.')
+                        return SUCCEED
 
             if count_to_next_point >= SEARCH_PHOTOS_PER_POINT:
                 count_to_next_point = 0
@@ -118,7 +125,7 @@ class Search(State):
                 if point_index >= len(SEARCH_POINTS):
                     point_index = 0
 
-                yasmin.YASMIN_LOG_INFO(f'Next point reached. x={SEARCH_POINTS[point_index]['x']}, y={SEARCH_POINTS[point_index]['y']}')
+                yasmin.YASMIN_LOG_INFO(f'Next point reached. x={SEARCH_POINTS[point_index]["x"]}, y={SEARCH_POINTS[point_index]["y"]}')
                 drone.move_to(
                     SEARCH_POINTS[point_index]['x'] - SEARCH_POINTS[point_index-1]['x'],
                     SEARCH_POINTS[point_index]['y'] - SEARCH_POINTS[point_index-1]['y'],
@@ -144,7 +151,7 @@ class Search(State):
 
         yasmin.YASMIN_LOG_ERROR('Timeout.')
         return TIMEOUT
-    
+
     def get_target_base(self, result):
         target_base = {}
         aruco, number = self.get_target_number(result)
@@ -159,11 +166,11 @@ class Search(State):
         return target_base
 
     def get_takeoff_base_error(self, result, alt):
-        center = result.filter_by_id(['7'])
-        if  center:
+        d = result.filter_by_class(['7'])
+        if d:
             h, w = result.image.shape[:2]
 
-            center[0].center
+            center = d[0].center
 
             error_x = (center[1] - (h / 2))
             error_y = (center[0] - (w / 2))
