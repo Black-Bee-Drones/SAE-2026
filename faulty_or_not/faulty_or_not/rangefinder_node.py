@@ -28,7 +28,7 @@ class RangefinderNode(Node):
             self.connection.connect(self.connection_str, self.baud_rate)
             
             self.get_logger().info("Creating RangefinderFilter")
-            self.rangefinder_filter = RangefinderFilter(self.connection, sensor=TFLuna("/dev/ttyUSB0")) 
+            self.rangefinder_filter = RangefinderFilter(self.connection, sensor=TFLuna("/dev/ttyUSB0"), obstacle_height=1.4) 
 
             self.get_logger().info("Starting RangefinderFilter loop")
             self.rangefinder_filter.start()

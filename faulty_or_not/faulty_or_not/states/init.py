@@ -1,4 +1,5 @@
 import yasmin
+import rclpy
 import sys
 import tty
 import termios
@@ -7,12 +8,14 @@ import os
 from yasmin import Blackboard
 from yasmin import State
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
-from ..parameters import SIMULATION
 from zaxis.telemetry.mavlink import MavlinkConnection
 
 from ..parameters import LOCATIONS
 
 from zaxis.drone import Drone
+
+from faulty_or_not.simtools import CameraSubscriber
+import threading
 
 class Init(State):
     def __init__(self):
@@ -61,7 +64,7 @@ class Init(State):
         print("\nSelect an option:")
         print("Use ↑/↓ to navigate, Enter to confirm\n")
         
-        options = ["Run Mission", "Run Ground Monitor", "Edit Coordinates"]
+        options = ["Run Mission", "Run Ground Monitor", "Edit Coordinates", "Toggle Simulation Mode"]
         
         for i, option in enumerate(options):
             if i == selected_index:
@@ -74,7 +77,7 @@ class Init(State):
     def select_mode(self):
         """Allow user to select option using keyboard arrows"""
         selected_index = 0
-        options = ["Run Mission", "Run Ground Monitor", "Edit Coordinates"]
+        options = ["Run Mission", "Run Ground Monitor", "Edit Coordinates", "Toggle Simulation Mode"]
         
         while True:
             self.display_menu(selected_index)
@@ -89,6 +92,27 @@ class Init(State):
                 return options[selected_index]
             elif key == '\x03': 
                 raise KeyboardInterrupt("Menu cancelled by user")
+
+    def toggle_simulation_mode(self, blackboard: Blackboard):
+        """Toggle simulation mode in blackboard"""
+        os.system('clear')
+        print("=" * 50)
+        print("         SIMULATION MODE TOGGLE")
+        print("=" * 50)
+        
+        current_state = blackboard["simulation"]
+        print(f"\nCurrent Simulation Mode: {'ON' if current_state else 'OFF'}")
+        
+        choice = input("\nToggle simulation mode? (y/n): ").strip().lower()
+        
+        if choice == 'y':
+            blackboard["simulation"] = not blackboard["simulation"]
+            print(f"Simulation Mode changed to: {'ON' if blackboard['simulation'] else 'OFF'}")
+            yasmin.YASMIN_LOG_INFO(f"Simulation mode toggled to: {blackboard['simulation']}")
+        else:
+            print("No changes made.")
+        
+        input("\nPress Enter to continue...")
 
     def edit_coordinates(self):
         """Allow editing saved coordinates in JSON"""
@@ -163,6 +187,9 @@ class Init(State):
     def execute(self, blackboard : Blackboard):
         try:
             yasmin.YASMIN_LOG_INFO("Faulty or Not - SAE Eletroquad 2026")
+            
+            # Initialize simulation mode in blackboard
+            blackboard["simulation"] = False
 
             # Interactive selection menu
             while(True):
@@ -170,6 +197,8 @@ class Init(State):
                 
                 if selected_option == "Edit Coordinates":
                     self.edit_coordinates()
+                elif selected_option == "Toggle Simulation Mode":
+                    self.toggle_simulation_mode(blackboard)
                 elif selected_option == "Run Ground Monitor":
                     yasmin.YASMIN_LOG_INFO("Ground Monitor mode selected.")
                     return "GROUND_MONITOR"
@@ -181,7 +210,15 @@ class Init(State):
             os.system('clear')
             locations = self.get_mission_coordinates()
             yasmin.YASMIN_LOG_INFO("Mission started.")
-            
+
+            if blackboard["simulation"]:
+                cam = CameraSubscriber()
+                thread = threading.Thread(target=rclpy.spin, args=(cam,), daemon=True)
+                thread.start()
+                blackboard["cam"] = cam
+            else:
+                blackboard["cam"] = None
+
             blackboard["control_index"] = 0
             blackboard["locations"] = locations
 

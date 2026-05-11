@@ -1,11 +1,10 @@
 from yasmin import StateMachine
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
-
-import threading
+from yasmin.blackboard import Blackboard
+from zaxis.drone import Drone
 
 import rclpy
 
-from faulty_or_not.simtools import CameraSubscriber
 
 from faulty_or_not.states import (
     Init, 
@@ -16,11 +15,11 @@ from faulty_or_not.states import (
     ReturnToLaunch,
     GroundMonitor
 )
-from faulty_or_not.parameters import MODEL_PATH, COARSE_MODEL_PATH, SIMULATION
+from faulty_or_not.parameters import MODEL_PATH, COARSE_MODEL_PATH
 
 
 class FaultyOrNot(StateMachine):
-    def __init__(self, cam=None):
+    def __init__(self):
         super().__init__(outcomes=[SUCCEED, ABORT, "END"])
         self.add_state(
             "INIT",
@@ -44,7 +43,7 @@ class FaultyOrNot(StateMachine):
         )
         self.add_state(
             "GAUGE_READING",
-            GaugeReading(model_path=MODEL_PATH, coarse_model_path=COARSE_MODEL_PATH, cam=cam),
+            GaugeReading(model_path=MODEL_PATH, coarse_model_path=COARSE_MODEL_PATH),
             transitions={SUCCEED:"AUDIO_FEEDBACK", ABORT:"RETURN_TO_LAUNCH"},
         )
         self.add_state(
@@ -64,24 +63,26 @@ class FaultyOrNot(StateMachine):
 def main():
     # Initialize ROS 2
     rclpy.init()
-    
-    try:
-        cam=None
-        if SIMULATION:
-            cam = CameraSubscriber()
-            thread = threading.Thread(target=rclpy.spin, args=(cam,), daemon=True)
-            thread.start()
 
+    sm : StateMachine = None
+    blackboard = Blackboard()
+    try:
         # Create the state machine
-        sm = FaultyOrNot(cam=cam)
+        sm : StateMachine = FaultyOrNot()
 
         # Execute the state machine
-        outcome = sm()
-        
+        outcome = sm(blackboard=blackboard)
+
         print(f"State machine finished with outcome: {outcome}")
         
     except KeyboardInterrupt:
-        print("State machine interrupted by user")
+        print("FaultyOrNot state machine interrupted by user. Landing...")
+        try:
+            drone : Drone = blackboard["drone"]
+            drone.land()
+        except KeyError:
+            print("Drone not initialized yet, nothing to land.")
+
     except Exception as e:
         print(f"State machine failed with error: {e}")
     finally:

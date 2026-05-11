@@ -5,22 +5,27 @@ from yasmin_ros.yasmin_node import YasminNode
 from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from nectar.ai.detection.models.ultralytics import UltralyticsModel
-from .navigation import Navigation
-from ..parameters import SIMULATION
 from zaxis.drone import Drone
 from sensor_msgs.msg import CompressedImage
-from zaxis.runtime import CommandHandle
+
+import os
 
 MANOMETER_HEIGHT_M = 1.7
-APPROACH_ALTITUDE_M = MANOMETER_HEIGHT_M + 1.0  # 2.7 m
+APPROACH_ALTITUDE_M = MANOMETER_HEIGHT_M + 1.0
 
-PID_KP = 0.5
-PID_MAX_VEL = 0.3
-CENTERED_THRESHOLD = 0.05
+PID_KP_BASE = 0.5
+PID_KP_BBOX_SCALE = 0.1
+PID_KP_MIN = 0.4
+PID_KP_MAX = 1.2
+PID_MAX_VEL = 0.2
+PID_KP_Z = 0.15
 
-CONSECUTIVE_LIMIT = 5
-MAX_DURATION_S = 60.0
+CENTERED_THRESHOLD_BASE = 0.05
+CENTERED_THRESHOLD_MAX = 0.08
+CENTERED_THRESHOLD_MIN = 0.25
 
+CONSECUTIVE_LIMIT = 3
+MAX_DURATION_S = 15.0
 
 class GaugeReading(State):
 
@@ -29,14 +34,12 @@ class GaugeReading(State):
         model_path: str,
         coarse_model_path: str,
         confidence_threshold: float = 0.7,
-        coarse_confidence_threshold: float = 0.7,
-        cam=None,
+        coarse_confidence_threshold: float = 0.6,
     ):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.node = YasminNode.get_instance()
         self.confidence_threshold = confidence_threshold
         self.coarse_confidence_threshold = coarse_confidence_threshold
-        self.cam = cam
 
         self.detector = self._load_model(model_path, "classification")
         self.coarse_detector = self._load_model(coarse_model_path, "coarse")
@@ -52,13 +55,16 @@ class GaugeReading(State):
             self.node.get_logger().error(f"Error loading {label} model: {e}")
             return None
 
-    def _read_frame(self):
-        if SIMULATION:
+    def _read_frame(self, blackboard: Blackboard):
+        if blackboard["simulation"]:
             frame = self.cam.frame
             return frame is not None, frame
         return self.cam.read()
 
     def _publish_frame(self, blackboard: Blackboard, frame):
+        save_dir = os.path.join(os.path.expanduser("~"), "faulty_inferences")
+        os.makedirs(save_dir, exist_ok=True)
+
         _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         msg = CompressedImage()
         msg.header.stamp = self.node.get_clock().now().to_msg()
@@ -99,25 +105,40 @@ class GaugeReading(State):
                     best_ann = model.draw_detections(crop, result)
         return best_det, best_x_off, best_y_off, best_ann
 
-    def _pid_step(self, error: float) -> float:
-        vel = PID_KP * error
+    def _adaptive_kp(self, frame_w, frame_h, x1, y1, x2, y2):
+        bbox_area_norm = ((x2 - x1) * (y2 - y1)) / (frame_w * frame_h)
+        kp = PID_KP_BASE * (PID_KP_BBOX_SCALE / max(bbox_area_norm, 1e-4))
+        return max(PID_KP_MIN, min(PID_KP_MAX, kp)), bbox_area_norm
+
+    def _adaptive_threshold(self, frame_w, frame_h, x1, y1, x2, y2) -> float:
+        bbox_area_norm = ((x2 - x1) * (y2 - y1)) / (frame_w * frame_h)
+        threshold = CENTERED_THRESHOLD_BASE * (PID_KP_BBOX_SCALE / max(bbox_area_norm, 1e-4))
+        return max(CENTERED_THRESHOLD_MIN, min(CENTERED_THRESHOLD_MAX, threshold))
+
+    def _pid_step(self, error: float, kp: float) -> float:
+        vel = kp * error
         return max(-PID_MAX_VEL, min(PID_MAX_VEL, vel))
 
-    def _center_on_manometer(self) -> bool:
-        timeout = 30.0
+    def _center_on_manometer(self, blackboard: Blackboard) -> bool:
+        timeout = 60.0
+
+        self.node.get_logger().info("[GaugeReading] Phase 1: centering XY...")
         start = time.time()
 
         while (time.time() - start) < timeout:
-            ok, frame = self._read_frame()
+            ok, frame = self._read_frame(blackboard=blackboard)
             if not ok or frame is None:
                 time.sleep(0.05)
                 continue
 
-            det, x_off, y_off, _ = self._best_detection_in_frame(
+            det, x_off, y_off, ann = self._best_detection_in_frame(
                 frame, self.coarse_detector, self.coarse_confidence_threshold
             )
+            self._publish_frame(blackboard, ann if det is not None else frame)
 
             if det is None:
+                self.node.get_logger().warn("[DATA_LOG] Phase 1 | NO DETECTION - Hovering")
+                self.drone.set_velocity_body(0.0, 0.0, 0.0)
                 time.sleep(0.1)
                 continue
 
@@ -126,18 +147,72 @@ class GaugeReading(State):
             cx = ((x1 + x2) / 2.0 + x_off - w / 2.0) / w
             cy = ((y1 + y2) / 2.0 + y_off - h / 2.0) / h
 
-            current_alt = abs(self.drone.local_position.z)
-            alt_error = current_alt - APPROACH_ALTITUDE_M
+            kp, area = self._adaptive_kp(w, h, x1, y1, x2, y2)
+            threshold = self._adaptive_threshold(w, h, x1, y1, x2, y2)
 
-            # vx = forward (inverted image Y), vy = right, vz = down (NED)
-            self.drone.set_velocity_body(
-                self._pid_step(-cy),
-                self._pid_step(cx),
-                self._pid_step(alt_error),
+            vx = self._pid_step(-cy, kp)
+            vy = self._pid_step(cx, kp)
+            
+            self.node.get_logger().info(
+                f"[DATA_LOG] Phase 1 | Area: {area:.6f} | cx: {cx:.3f} | cy: {cy:.3f} | "
+                f"KP: {kp:.3f} | Thr: {threshold:.3f} | vx: {vx:.3f} | vy: {vy:.3f}"
             )
+            
+            self.drone.set_velocity_body(vx, vy, 0.0)
 
-            if abs(cx) < CENTERED_THRESHOLD and abs(cy) < CENTERED_THRESHOLD and abs(alt_error) < 0.1:
-                self.drone.set_velocity_body(0, 0, 0)
+            if abs(cx) < threshold and abs(cy) < threshold:
+                self.drone.set_velocity_body(0.0, 0.0, 0.0)
+                self.node.get_logger().info("[GaugeReading] XY centered. Starting altitude correction...")
+                break
+        else:
+            return False
+
+        self.node.get_logger().info("[GaugeReading] Phase 2: correcting altitude + XY...")
+        start = time.time()
+
+        while (time.time() - start) < timeout:
+            ok, frame = self._read_frame(blackboard=blackboard)
+            if not ok or frame is None:
+                time.sleep(0.05)
+                continue
+
+            alt_error = abs(self.drone.distance_sensor.current_distance) - APPROACH_ALTITUDE_M
+
+            det, x_off, y_off, ann = self._best_detection_in_frame(
+                frame, self.coarse_detector, self.coarse_confidence_threshold
+            )
+            self._publish_frame(blackboard, ann if det is not None else frame)
+
+            if det is None:
+                vz = self._pid_step(alt_error, PID_KP_Z)
+                self.node.get_logger().warn(
+                    f"[DATA_LOG] Phase 2 | NO DETECTION | alt_err: {alt_error:.3f} | vz: {vz:.3f}"
+                )
+                self.drone.set_velocity_body(0.0, 0.0, vz)
+                time.sleep(0.1)
+                continue
+
+            h, w = frame.shape[:2]
+            x1, y1, x2, y2 = det.xyxy
+            cx = ((x1 + x2) / 2.0 + x_off - w / 2.0) / w
+            cy = ((y1 + y2) / 2.0 + y_off - h / 2.0) / h
+
+            kp, area = self._adaptive_kp(w, h, x1, y1, x2, y2)
+            threshold = self._adaptive_threshold(w, h, x1, y1, x2, y2)
+
+            vx = self._pid_step(-cy, kp)
+            vy = self._pid_step(cx, kp)
+            vz = self._pid_step(alt_error, PID_KP_Z)
+            
+            self.node.get_logger().info(
+                f"[DATA_LOG] Phase 2 | Area: {area:.6f} | alt_err: {alt_error:.3f} | cx: {cx:.3f} | cy: {cy:.3f} | "
+                f"KP: {kp:.3f} | Thr: {threshold:.3f} | vx: {vx:.3f} | vy: {vy:.3f} | vz: {vz:.3f}"
+            )
+            
+            self.drone.set_velocity_body(vx, vy, vz)
+
+            if abs(cx) < threshold and abs(cy) < threshold and abs(alt_error) < 0.1:
+                self.drone.set_velocity_body(0.0, 0.0, 0.0)
                 return True
 
         return False
@@ -156,22 +231,17 @@ class GaugeReading(State):
         if "drone" in blackboard:
             self.drone = blackboard["drone"]
 
+        self.drone._set_param("WP_YAW_BEHAVIOR", 0).wait(timeout=3.0)
+
+        self.cam = blackboard["cam"]
         if self.cam is None:
             self.cam = cv2.VideoCapture(0)
 
-        goto_handler: CommandHandle = blackboard["goto_handler"]
-
-        self.node.get_logger().info("[GaugeReading] Waiting for navigation to finish...")
-        while not goto_handler.done():
-            time.sleep(0.1)
-
         self.node.get_logger().info("[GaugeReading] Centering on manometer...")
-        centered = self._center_on_manometer()
+        centered = self._center_on_manometer(blackboard=blackboard)
 
         if not centered:
-            self.node.get_logger().warn(
-                "[GaugeReading] Failed to center on manometer, proceeding anyway."
-            )
+            self.node.get_logger().warn("[GaugeReading] Failed to center on manometer, proceeding anyway.")
 
         self.node.get_logger().info("[GaugeReading] Starting classification...")
 
@@ -185,11 +255,13 @@ class GaugeReading(State):
         frame_count = 0
 
         while (time.time() - start_time) < MAX_DURATION_S:
-            ok, frame = self._read_frame()
+            ok, frame = self._read_frame(blackboard=blackboard)
             if not ok or frame is None:
                 continue
 
             frame_count += 1
+
+            # !! INÍCIO DAS ALTERAÇÕES !!
             det, _, _, ann = self._best_detection_in_frame(
                 frame, self.detector, self.confidence_threshold
             )
@@ -197,8 +269,22 @@ class GaugeReading(State):
             self._publish_frame(blackboard, ann if det is not None else frame)
 
             if det is None:
-                consecutive_count = 0
+                self.node.get_logger().info("[GaugeReading] No detection found.")
+                self.drone.set_velocity_body(0.0, 0.0, 0.0)
                 continue
+
+            alt_error = abs(self.drone.distance_sensor.current_distance) - APPROACH_ALTITUDE_M
+
+            vz = self._pid_step(alt_error, PID_KP_Z)
+
+            self.drone.set_velocity_body(0, 0, vz)
+
+            self.node.get_logger().info(
+                f"[DATA_LOG] Classification | Frame {frame_count} | "
+                f"alt_err: {alt_error:.3f} | "
+                f"vz: {vz:.3f}"
+            )
+            # !! FIM DAS ALTERAÇÕES !!
 
             last_ann = ann
             class_id = det.class_id
