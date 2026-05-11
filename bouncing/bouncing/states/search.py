@@ -86,7 +86,6 @@ class Search(State):
         start = self.node.get_clock().now()
         duration = Duration(seconds=SEARCH_TIMEOUT)
         while self.node.get_clock().now() - start < duration:
-            rclpy.spin_once(self.node, timeout_sec=0.1)
 
             if drone.get_altitude() >= SEARCH_LIMITE_ALTITUDE:
                 yasmin.YASMIN_LOG_ERROR('Failed: limit altitude reached.')

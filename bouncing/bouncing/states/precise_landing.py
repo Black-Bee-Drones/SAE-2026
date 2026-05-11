@@ -80,7 +80,6 @@ class PreciseLanding(State):
         start = self.node.get_clock().now()
         duration = Duration(seconds=PRECISE_TIMEOUT)
         while self.node.get_clock().now() - start < duration:
-            rclpy.spin_once(self.node, timeout_sec=0.1)
 
             if hover_count >= PRECISE_HOVER_COUNT:
                 yasmin.YASMIN_LOG_INFO(f'Completed successfully.')
