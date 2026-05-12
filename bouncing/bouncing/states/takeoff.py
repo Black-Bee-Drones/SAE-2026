@@ -24,7 +24,7 @@ class Takeoff(State):
 
         yasmin.YASMIN_LOG_INFO(f'Taking off to altitude: {TAKEOFF_ALTITUDE}m...')
         try:
-            drone.takeoff(TAKEOFF_ALTITUDE)
+            drone.takeoff(TAKEOFF_ALTITUDE, adjust_altitude=False)
         except Exception as e:
             yasmin.YASMIN_LOG_ERROR(f'Taking off failed: {e}.')
             return ABORT

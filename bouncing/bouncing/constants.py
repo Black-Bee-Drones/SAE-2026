@@ -27,8 +27,8 @@ SEARCH_FIND_TOLERANCE = 3
 SEARCH_LIMITE_ALTITUDE = 6.5  # m
 SEARCH_TARGET_ALTITUDE = 6.0  # m
 SEARCH_TIMEOUT = 3 * 60  # s
-SEARCH_VERTICAL_SPEED = 0.2  # m/s
-SEARCH_PHOTOS_PER_POINT = 30
+SEARCH_VERTICAL_SPEED = 0.5  # m/s
+SEARCH_PHOTOS_PER_POINT = 10
 SEARCH_POINTS = [
     {
         'x': 0.0,
@@ -50,11 +50,11 @@ SEARCH_POINTS = [
 
 PRECISE_LIMITE_ALTITUDE = 6.5  # m
 PRECISE_LIMITE_RECOVERY = 6.0  # m
-PRECISE_HOVER_COUNT = 10  # number of consecutive detections to consider the landing successful
+PRECISE_HOVER_COUNT = 3  # number of consecutive detections to consider the landing successful
 PRECISE_RESET_PID = 2  # number of detections lost to reset the PID controller
-PRECISE_LOST_TOLERANCE = 15
+PRECISE_LOST_TOLERANCE = 10
 PRECISE_TIMEOUT = 6 * 60  # s
-PRECISE_VERTICAL_SPEED = 0.1  # m/s
+PRECISE_VERTICAL_SPEED = 0.15  # m/s
 PRECISE_ALING_TOLERANCE = 0.25  # m
 PRECISE_LAND_ALTITUDE = 1.0  # m
 

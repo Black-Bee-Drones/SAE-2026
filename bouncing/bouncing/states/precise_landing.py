@@ -84,7 +84,6 @@ class PreciseLanding(State):
             if hover_count >= PRECISE_HOVER_COUNT:
                 yasmin.YASMIN_LOG_INFO(f'Completed successfully.')
                 drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                drone.delay(1.0)
                 return SUCCEED
 
             if drone.get_altitude() >= PRECISE_LIMITE_ALTITUDE:
