@@ -21,11 +21,17 @@ from bouncing.constants import (
     PRECISE_VERTICAL_SPEED,
     PRECISE_ALING_TOLERANCE,
     PRECISE_LAND_ALTITUDE,
+    PRECISE_DOWN_TOLERANCE_PX,
     CONTROLER_P_XY,
     CONTROLER_I_XY,
     CONTROLER_D_XY,
     CONTROLER_OUTPUT_LIMITS_XY,
     CONTROLER_INTEGRAL_LIMITS_XY,
+    CONTROLER_P_Z,
+    CONTROLER_I_Z,
+    CONTROLER_D_Z,
+    CONTROLER_OUTPUT_LIMITS_Z,
+    CONTROLER_INTEGRAL_LIMITS_Z,
 )
 
 
@@ -49,6 +55,14 @@ class PreciseLanding(State):
             kd=CONTROLER_D_XY,
             output_limits=CONTROLER_OUTPUT_LIMITS_XY,
             integral_limits=CONTROLER_INTEGRAL_LIMITS_XY,
+        )
+
+        self.pid_z = PIDController(
+            kp=CONTROLER_P_Z,
+            ki=CONTROLER_I_Z,
+            kd=CONTROLER_D_Z,
+            output_limits=CONTROLER_OUTPUT_LIMITS_Z,
+            integral_limits=CONTROLER_INTEGRAL_LIMITS_Z,
         )
     
     def ppm(self, altitude_m: float, fov_deg: float, width: float):
@@ -110,7 +124,6 @@ class PreciseLanding(State):
 
                     yasmin.YASMIN_LOG_ERROR('Recovery: It lost detection many times.')
                     drone.move_velocity(vz=PRECISE_VERTICAL_SPEED)
-
                 continue
 
             if lost_detection_count >= PRECISE_RESET_PID:
@@ -121,26 +134,24 @@ class PreciseLanding(State):
             h, w = result.image.shape[:2]
             center = landing_base_number.center
 
+            error_x_px = (center[1] - (h / 2))
+            error_y_px = (center[0] - (w / 2))
+
             alt = drone.get_altitude()
+            error_x = error_x_px / self.ppm(alt, 86, w)
+            error_y = error_y_px / self.ppm(alt, 47, h)
+            error_z = PRECISE_LAND_ALTITUDE - drone.get_altitude()
 
-            error_x = (center[1] - (h / 2))
-            error_y = (center[0] - (w / 2))
-
-            error_x = error_x / self.ppm(alt, 86, w)
-            error_y = error_y / self.ppm(alt, 47, h)
-
+            ert_dig_px = math.hypot(error_x_px, error_y_px)
             ert_dig = math.hypot(error_x, error_y)
-
-            centralized = ert_dig <= PRECISE_ALING_TOLERANCE
-            height_is_low = drone.get_altitude() <= PRECISE_LAND_ALTITUDE
 
             output_x = self.pid_x.update(error_x)
             output_y = self.pid_y.update(error_y)
-            output_z = -PRECISE_VERTICAL_SPEED if (centralized and not height_is_low) else 0.0
+            output_z = self.pid_z.update(error_z)
 
             yasmin.YASMIN_LOG_INFO(f'Detection: alt={alt:.1f}, ert_dig={ert_dig:.2f}, error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
 
-            if centralized and height_is_low:
+            if (ert_dig <= PRECISE_ALING_TOLERANCE) and (alt <= PRECISE_LAND_ALTITUDE):
                 hover_count += 1
                 yasmin.YASMIN_LOG_INFO(f'Hovering ({hover_count}/{PRECISE_HOVER_COUNT}).')
             else:
@@ -149,7 +160,7 @@ class PreciseLanding(State):
             drone.move_velocity(
                 vx = output_x,
                 vy = output_y,
-                vz = output_z,
+                vz = output_z if (ert_dig_px <= PRECISE_DOWN_TOLERANCE_PX) else 0.0,
                 vyaw = 0.0,
             )
 

@@ -223,6 +223,7 @@ class Search(State):
 
 
     def get_number_of_aruco(self, img):
+        return 25
         if img is None:
             return None
 
@@ -257,7 +258,6 @@ class Search(State):
                     continue
 
                 if (s.class_name == target_base['shape']):
-                    yasmin.YASMIN_LOG_INFO(f'mesmo shape')
                     if (abs(n.center[0] - s.center[0]) <= s.width / 2) and (abs(n.center[1] - s.center[1]) <= s.height / 2):
                         landing_bases.append(n)
 
