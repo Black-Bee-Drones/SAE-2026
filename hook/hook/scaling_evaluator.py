@@ -111,7 +111,7 @@ class ScalingEvaluator(Node):
         self.get_logger().info(f"Loading model: {SEG_MODEL_PATH}")
         self.segmentor = Segmentor(SEG_MODEL_PATH, confidence_threshold=SEG_PREDICT_CONF)
         self.segmentor.load()
-        self.segmentor.segment(np.zeros((640, 640, 3), dtype=np.uint8))
+        self.segmentor.segment(np.zeros((960, 960, 3), dtype=np.uint8))
 
         name_to_id = {v: k for k, v in self.segmentor.class_names.items()}
         if SPHERE_CLASS not in name_to_id or HOSE_CLASS not in name_to_id:

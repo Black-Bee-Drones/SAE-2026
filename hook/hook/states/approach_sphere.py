@@ -136,6 +136,7 @@ class ApproachSphere(State):
         samples = []
         deadline = time.time() + 5.0
         while len(samples) < APPROACH_INIT_BEARING_FRAMES and time.time() < deadline:
+            drone.delay(0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)
@@ -231,6 +232,7 @@ class ApproachSphere(State):
         last_log = 0.0
 
         while time.time() - start < APPROACH_TIMEOUT:
+            drone.delay(0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)
@@ -318,6 +320,7 @@ class ApproachSphere(State):
         start = time.time()
 
         while time.time() - start < APPROACH_TIMEOUT:
+            drone.delay(0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)

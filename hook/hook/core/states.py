@@ -82,7 +82,7 @@ class Initialize(State):
                 SEG_MODEL_PATH, confidence_threshold=SEG_PREDICT_CONF
             )
             segmentor.load()
-            segmentor.segment(np.zeros((640, 640, 3), dtype=np.uint8))
+            segmentor.segment(np.zeros((960, 960, 3), dtype=np.uint8))
             blackboard["segmentor"] = segmentor
 
             name_to_id = {v: k for k, v in segmentor.class_names.items()}

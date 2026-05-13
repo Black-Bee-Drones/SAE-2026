@@ -42,6 +42,7 @@ class SearchAndAscend(State):
         start_time = time.time()
 
         while time.time() - start_time < ASCENT_TIMEOUT:
+            drone.delay(0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)

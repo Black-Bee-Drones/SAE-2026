@@ -20,8 +20,8 @@ class ReleaseHook(State):
 
         try:
             yasmin.YASMIN_LOG_INFO("Releasing hook...")
-            drone.move_velocity(0.0, 0.0, 0.0, 0.0, duration=1.0)
-            drone.delay(1.0)
+            # drone.move_velocity(0.0, 0.0, 0.0, 0.0, duration=1.0)
+            # drone.delay(1.0)
 
             drone.do_servo(SERVO_CHANNEL, HOLD_PWM)
             drone.delay(1.0)

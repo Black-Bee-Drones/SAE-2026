@@ -142,7 +142,7 @@ def main():
     rclpy.init()
     try:
         sm = build_sm(stages, args.end)
-        YasminViewerPub(sm, fsm_name="hang_the_wire")
+        # YasminViewerPub(sm, fsm_name="hang_the_wire")
 
         names = ", ".join(n for n, _ in stages) or "<none>"
         print(f"\nStarting mission: stages=[{names}] end={args.end}\n")

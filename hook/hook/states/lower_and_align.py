@@ -142,6 +142,7 @@ class LowerAndAlign(State):
         descend_start = None
 
         while True:
+            drone.delay(0.05)
             now = time.time()
             if phase in ("yaw", "align") and now - align_start > HOSE_ALIGN_TIMEOUT:
                 drone.move_velocity(
@@ -320,7 +321,7 @@ class LowerAndAlign(State):
                     if descend_confirmed >= DESCEND_RELEASE_CONFIRMATIONS:
                         drone.move_velocity(
                             0.0, 0.0, 0.0, 0.0,
-                            reference=MoveReference.BODY, duration=2.5,
+                            reference=MoveReference.BODY, duration=0.5,
                         )
                         yasmin.YASMIN_LOG_INFO(
                             f"LowerAndAlign: release pose reached at "

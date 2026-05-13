@@ -204,6 +204,8 @@ class OrientToHook(State):
         deadline = time.time() + 5.0
 
         while len(deltas) < ORIENT_SAMPLE_FRAMES and time.time() < deadline:
+            drone.delay(0.05)
+
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)
@@ -286,6 +288,7 @@ class OrientToHook(State):
         start = time.time()
 
         while time.time() - start < ORIENT_TIMEOUT:
+            drone.delay(0.05)
             altitude = drone.get_altitude(AltitudeSource.LIDAR)
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)
