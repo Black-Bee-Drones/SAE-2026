@@ -137,14 +137,24 @@ class Search(State):
 
             if SEARCH_POINTS[point_index]['x'] == 0.0 and SEARCH_POINTS[point_index]['y'] == 0.0:
                 error_x, error_y = self.get_takeoff_base_error(result, drone.get_altitude())
+                output_x = self.pid_x.update(error_x)
+                output_y = self.pid_y.update(error_y)
+                yasmin.YASMIN_LOG_INFO(f'Takeoff base: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
+
             else:
-                error_x = 0.0
-                error_y = 0.0
+                output_x = 0.0
+                output_y = 0.0
+            
+            if (drone.get_altitude() < SEARCH_TARGET_ALTITUDE):
+                output_z = SEARCH_VERTICAL_SPEED
+                yasmin.YASMIN_LOG_INFO(f'UP: vz={output_z:.2f}')
+            else:
+                output_z = 0.0
 
             drone.move_velocity(
-                vx = self.pid_x.update(error_x) if (error_x == 0.0) else 0.0,
-                vy = self.pid_y.update(error_y) if (error_y == 0.0) else 0.0,
-                vz = SEARCH_VERTICAL_SPEED if drone.get_altitude() < SEARCH_TARGET_ALTITUDE else 0.0,
+                vx = output_x,
+                vy = output_y,
+                vz = output_z,
                 vyaw = 0.0,
             )
 
