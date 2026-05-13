@@ -140,7 +140,7 @@ class PreciseLanding(State):
             alt = drone.get_altitude()
             error_x = error_x_px / self.ppm(alt, 86, w)
             error_y = error_y_px / self.ppm(alt, 47, h)
-            error_z = drone.get_altitude() - 0.9
+            error_z = drone.get_altitude() - 0.7
 
             ert_dig_px = math.hypot(error_x_px, error_y_px)
             ert_dig = math.hypot(error_x, error_y)
@@ -150,8 +150,8 @@ class PreciseLanding(State):
             output_z = self.pid_z.update(error_z)
 
             if (alt <= PRECISE_LAND_ALTITUDE):
-                output_x *= 0.5
-                output_y *= 0.5
+                output_x *= 0.333333
+                output_y *= 0.333333
 
             yasmin.YASMIN_LOG_INFO(f'Detection: alt={alt:.1f}, ert_dig={ert_dig:.2f}, error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
 
