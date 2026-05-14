@@ -13,6 +13,7 @@ from nectar.control import MavrosDrone, PIDController
 from nectar.vision import ImageHandler
 
 from bouncing.constants import (
+    SEARCH_YAW,
     SEARCH_FIND_TOLERANCE,
     SEARCH_LIMITE_ALTITUDE,
     SEARCH_TARGET_ALTITUDE,
@@ -80,6 +81,7 @@ class Search(State):
         image_handler: ImageHandler = blackboard['image_handler']
 
         yasmin.YASMIN_LOG_INFO('Start.')
+        has_rotated = False
         try:
             count_to_next_point = 0
             point_index = 0
@@ -119,6 +121,16 @@ class Search(State):
                             return SUCCEED
 
                 if count_to_next_point >= SEARCH_PHOTOS_PER_POINT:
+                    if SEARCH_YAW and not has_rotated:
+                        has_rotated = True
+                        yasmin.YASMIN_LOG_INFO("Rotating 90 degrees to go to next point...")
+                        drone.move_to(
+                            x = 0.0,
+                            y = 0.0,
+                            z = 0.0,
+                            yaw = 90,
+                        )
+
                     count_to_next_point = 0
                     point_index += 1
                     if point_index >= len(SEARCH_POINTS):
