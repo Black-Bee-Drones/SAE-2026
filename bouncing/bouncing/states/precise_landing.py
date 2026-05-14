@@ -88,88 +88,94 @@ class PreciseLanding(State):
 
         yasmin.YASMIN_LOG_INFO('Start.')
 
-        yasmin.YASMIN_LOG_INFO(f'Start PID in landing base: {target_base}.')
-        lost_detection_count = 0
-        hover_count = 0
-        start = self.node.get_clock().now()
-        duration = Duration(seconds=PRECISE_TIMEOUT)
-        while self.node.get_clock().now() - start < duration:
+        try:
 
-            if hover_count >= PRECISE_HOVER_COUNT:
-                yasmin.YASMIN_LOG_INFO(f'Completed successfully.')
-                drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                return SUCCEED
-
-            if drone.get_altitude() >= PRECISE_LIMITE_ALTITUDE:
-                yasmin.YASMIN_LOG_ERROR('Failed: limit altitude reached.')
-                drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                drone.delay(1.0)
-                return FAIL
-
-            result = image_handler.take_photo()
-            landing_base_number = self.get_landing_base(target_base, result)
-
-            if landing_base_number is None:
-                lost_detection_count += 1
-
-                if lost_detection_count <= PRECISE_LOST_TOLERANCE:
-                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                    yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LOST_TOLERANCE}).')
-
-                else:
-                    if drone.get_altitude() >= PRECISE_LIMITE_RECOVERY:
-                        yasmin.YASMIN_LOG_ERROR('Recovery: Limit.')
-                        drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                        continue
-
-                    yasmin.YASMIN_LOG_ERROR('Recovery: It lost detection many times.')
-                    drone.move_velocity(vz=PRECISE_VERTICAL_SPEED)
-                continue
-
-            if lost_detection_count >= PRECISE_RESET_PID:
-                self.pid_x.reset()
-                self.pid_y.reset()
+            yasmin.YASMIN_LOG_INFO(f'Start PID in landing base: {target_base}.')
             lost_detection_count = 0
+            hover_count = 0
+            start = self.node.get_clock().now()
+            duration = Duration(seconds=PRECISE_TIMEOUT)
+            while self.node.get_clock().now() - start < duration:
 
-            h, w = result.image.shape[:2]
-            center = landing_base_number.center
+                if hover_count >= PRECISE_HOVER_COUNT:
+                    yasmin.YASMIN_LOG_INFO(f'Completed successfully.')
+                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                    return SUCCEED
 
-            error_x_px = (center[1] - (h / 2))
-            error_y_px = (center[0] - (w / 2))
+                if drone.get_altitude() >= PRECISE_LIMITE_ALTITUDE:
+                    yasmin.YASMIN_LOG_ERROR('Failed: limit altitude reached.')
+                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                    drone.delay(1.0)
+                    return FAIL
 
-            alt = drone.get_altitude()
-            error_x = error_x_px / self.ppm(alt, 86, w)
-            error_y = error_y_px / self.ppm(alt, 47, h)
-            error_z = drone.get_altitude() - 0.7
+                result = image_handler.take_photo()
+                landing_base_number = self.get_landing_base(target_base, result)
 
-            ert_dig_px = math.hypot(error_x_px, error_y_px)
-            ert_dig = math.hypot(error_x, error_y)
+                if landing_base_number is None:
+                    lost_detection_count += 1
 
-            output_x = self.pid_x.update(error_x)
-            output_y = self.pid_y.update(error_y)
-            output_z = self.pid_z.update(error_z)
+                    if lost_detection_count <= PRECISE_LOST_TOLERANCE:
+                        drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                        yasmin.YASMIN_LOG_ERROR(f'Lost detection ({lost_detection_count}/{PRECISE_LOST_TOLERANCE}).')
 
-            if (alt <= PRECISE_LAND_ALTITUDE):
-                output_x *= 0.333333
-                output_y *= 0.333333
+                    else:
+                        if drone.get_altitude() >= PRECISE_LIMITE_RECOVERY:
+                            yasmin.YASMIN_LOG_ERROR('Recovery: Limit.')
+                            drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                            continue
 
-            yasmin.YASMIN_LOG_INFO(f'Detection: alt={alt:.1f}, ert_dig={ert_dig:.2f}, error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
+                        yasmin.YASMIN_LOG_ERROR('Recovery: It lost detection many times.')
+                        drone.move_velocity(vz=PRECISE_VERTICAL_SPEED)
+                    continue
 
-            if (ert_dig <= PRECISE_ALING_TOLERANCE) and (alt <= PRECISE_LAND_ALTITUDE):
-                hover_count += 1
-                yasmin.YASMIN_LOG_INFO(f'Hovering ({hover_count}/{PRECISE_HOVER_COUNT}).')
-            else:
-                hover_count = 0
+                if lost_detection_count >= PRECISE_RESET_PID:
+                    self.pid_x.reset()
+                    self.pid_y.reset()
+                lost_detection_count = 0
 
-            drone.move_velocity(
-                vx = output_x,
-                vy = output_y,
-                vz = output_z if (ert_dig_px <= PRECISE_DOWN_TOLERANCE_PX) else 0.0,
-                vyaw = 0.0,
-            )
+                h, w = result.image.shape[:2]
+                center = landing_base_number.center
 
-        yasmin.YASMIN_LOG_ERROR('Timeout.')
-        return TIMEOUT
+                error_x_px = (center[1] - (h / 2))
+                error_y_px = (center[0] - (w / 2))
+
+                alt = drone.get_altitude()
+                error_x = error_x_px / self.ppm(alt, 86, w)
+                error_y = error_y_px / self.ppm(alt, 47, h)
+                error_z = drone.get_altitude() - 0.7
+
+                ert_dig_px = math.hypot(error_x_px, error_y_px)
+                ert_dig = math.hypot(error_x, error_y)
+
+                output_x = self.pid_x.update(error_x)
+                output_y = self.pid_y.update(error_y)
+                output_z = self.pid_z.update(error_z)
+
+                if (alt <= PRECISE_LAND_ALTITUDE):
+                    output_x *= 0.333333
+                    output_y *= 0.333333
+
+                yasmin.YASMIN_LOG_INFO(f'Detection: alt={alt:.1f}, ert_dig={ert_dig:.2f}, error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
+
+                if (ert_dig <= PRECISE_ALING_TOLERANCE) and (alt <= PRECISE_LAND_ALTITUDE):
+                    hover_count += 1
+                    yasmin.YASMIN_LOG_INFO(f'Hovering ({hover_count}/{PRECISE_HOVER_COUNT}).')
+                else:
+                    hover_count = 0
+
+                drone.move_velocity(
+                    vx = output_x,
+                    vy = output_y,
+                    vz = output_z if (ert_dig_px <= PRECISE_DOWN_TOLERANCE_PX) else 0.0,
+                    vyaw = 0.0,
+                )
+
+            yasmin.YASMIN_LOG_ERROR('Timeout.')
+            return TIMEOUT
+
+        except:
+            yasmin.YASMIN_LOG_ERROR('Error: ABORT.')
+            return ABORT
 
 
     def get_landing_base(self, target_base: dict, result):

@@ -80,86 +80,90 @@ class Search(State):
         image_handler: ImageHandler = blackboard['image_handler']
 
         yasmin.YASMIN_LOG_INFO('Start.')
+        try:
+            count_to_next_point = 0
+            point_index = 0
+            start = self.node.get_clock().now()
+            duration = Duration(seconds=SEARCH_TIMEOUT)
+            while self.node.get_clock().now() - start < duration:
 
-        count_to_next_point = 0
-        point_index = 0
-        start = self.node.get_clock().now()
-        duration = Duration(seconds=SEARCH_TIMEOUT)
-        while self.node.get_clock().now() - start < duration:
+                if drone.get_altitude() >= SEARCH_LIMITE_ALTITUDE:
+                    yasmin.YASMIN_LOG_ERROR('Failed: limit altitude reached.')
+                    drone.move_velocity(0.0, 0.0, 0.0, 0.0)
+                    drone.delay(1.0)
+                    return FAIL
 
-            if drone.get_altitude() >= SEARCH_LIMITE_ALTITUDE:
-                yasmin.YASMIN_LOG_ERROR('Failed: limit altitude reached.')
-                drone.move_velocity(0.0, 0.0, 0.0, 0.0)
-                drone.delay(1.0)
-                return FAIL
+                result = image_handler.take_photo()
 
-            result = image_handler.take_photo()
+                target_base = self.get_target_base(result)
 
-            target_base = self.get_target_base(result)
+                if not target_base:
+                    if not blackboard['target_base']:
+                        yasmin.YASMIN_LOG_ERROR('Target NOT found.')
 
-            if not target_base:
-                if not blackboard['target_base']:
-                    yasmin.YASMIN_LOG_ERROR('Target NOT found.')
+                elif (blackboard['target_base'] != target_base):
+                    yasmin.YASMIN_LOG_INFO(f'Target base: {target_base}.')
+                    blackboard['target_base'] = target_base
+                    count_landind_base = 0
 
-            elif (blackboard['target_base'] != target_base):
-                yasmin.YASMIN_LOG_INFO(f'Target base: {target_base}.')
-                blackboard['target_base'] = target_base
-                count_landind_base = 0
+                if blackboard['target_base']:
+                    landing_base_number = self.get_landing_base_number(blackboard['target_base'], result)
 
-            if blackboard['target_base']:
-                landing_base_number = self.get_landing_base_number(blackboard['target_base'], result)
+                    if not landing_base_number:
+                        yasmin.YASMIN_LOG_ERROR('Landing base NOT found.')
+                    else:
+                        count_landind_base += 1
+                        yasmin.YASMIN_LOG_INFO(f'Landing base found ({count_landind_base}/{SEARCH_FIND_TOLERANCE}).')
+                        if count_landind_base >= SEARCH_FIND_TOLERANCE:
+                            yasmin.YASMIN_LOG_INFO('Completed successfully.')
+                            return SUCCEED
 
-                if not landing_base_number:
-                    yasmin.YASMIN_LOG_ERROR('Landing base NOT found.')
+                if count_to_next_point >= SEARCH_PHOTOS_PER_POINT:
+                    count_to_next_point = 0
+                    point_index += 1
+                    if point_index >= len(SEARCH_POINTS):
+                        point_index = 0
+
+                    yasmin.YASMIN_LOG_INFO(f'Next point reached. x={SEARCH_POINTS[point_index]["x"]}, y={SEARCH_POINTS[point_index]["y"]}')
+                    drone.move_to(
+                        SEARCH_POINTS[point_index]['x'] - SEARCH_POINTS[point_index-1]['x'],
+                        SEARCH_POINTS[point_index]['y'] - SEARCH_POINTS[point_index-1]['y'],
+                        0.0,
+                        0.0,
+                    )
+
+                if (drone.get_altitude() >= SEARCH_TARGET_ALTITUDE):
+                    count_to_next_point += 1
+
+                if SEARCH_POINTS[point_index]['x'] == 0.0 and SEARCH_POINTS[point_index]['y'] == 0.0:
+                    error_x, error_y = self.get_takeoff_base_error(result, drone.get_altitude())
+                    output_x = self.pid_x.update(error_x)
+                    output_y = self.pid_y.update(error_y)
+                    yasmin.YASMIN_LOG_INFO(f'Takeoff base: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
+
                 else:
-                    count_landind_base += 1
-                    yasmin.YASMIN_LOG_INFO(f'Landing base found ({count_landind_base}/{SEARCH_FIND_TOLERANCE}).')
-                    if count_landind_base >= SEARCH_FIND_TOLERANCE:
-                        yasmin.YASMIN_LOG_INFO('Completed successfully.')
-                        return SUCCEED
+                    output_x = 0.0
+                    output_y = 0.0
+                
+                if (drone.get_altitude() < SEARCH_TARGET_ALTITUDE):
+                    output_z = SEARCH_VERTICAL_SPEED
+                    yasmin.YASMIN_LOG_INFO(f'UP: vz={output_z:.2f}')
+                else:
+                    output_z = 0.0
 
-            if count_to_next_point >= SEARCH_PHOTOS_PER_POINT:
-                count_to_next_point = 0
-                point_index += 1
-                if point_index >= len(SEARCH_POINTS):
-                    point_index = 0
-
-                yasmin.YASMIN_LOG_INFO(f'Next point reached. x={SEARCH_POINTS[point_index]["x"]}, y={SEARCH_POINTS[point_index]["y"]}')
-                drone.move_to(
-                    SEARCH_POINTS[point_index]['x'] - SEARCH_POINTS[point_index-1]['x'],
-                    SEARCH_POINTS[point_index]['y'] - SEARCH_POINTS[point_index-1]['y'],
-                    0.0,
-                    0.0,
+                drone.move_velocity(
+                    vx = output_x,
+                    vy = output_y,
+                    vz = output_z,
+                    vyaw = 0.0,
                 )
 
-            if (drone.get_altitude() >= SEARCH_TARGET_ALTITUDE):
-                count_to_next_point += 1
+            yasmin.YASMIN_LOG_ERROR('Timeout.')
+            return TIMEOUT
 
-            if SEARCH_POINTS[point_index]['x'] == 0.0 and SEARCH_POINTS[point_index]['y'] == 0.0:
-                error_x, error_y = self.get_takeoff_base_error(result, drone.get_altitude())
-                output_x = self.pid_x.update(error_x)
-                output_y = self.pid_y.update(error_y)
-                yasmin.YASMIN_LOG_INFO(f'Takeoff base: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
-
-            else:
-                output_x = 0.0
-                output_y = 0.0
-            
-            if (drone.get_altitude() < SEARCH_TARGET_ALTITUDE):
-                output_z = SEARCH_VERTICAL_SPEED
-                yasmin.YASMIN_LOG_INFO(f'UP: vz={output_z:.2f}')
-            else:
-                output_z = 0.0
-
-            drone.move_velocity(
-                vx = output_x,
-                vy = output_y,
-                vz = output_z,
-                vyaw = 0.0,
-            )
-
-        yasmin.YASMIN_LOG_ERROR('Timeout.')
-        return TIMEOUT
+        except:
+            yasmin.YASMIN_LOG_ERROR('Error: ABORT.')
+            return ABORT
 
     def get_target_base(self, result):
         target_base = {}
