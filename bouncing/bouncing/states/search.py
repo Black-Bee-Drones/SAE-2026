@@ -13,7 +13,6 @@ from nectar.control import MavrosDrone, PIDController
 from nectar.vision import ImageHandler
 
 from bouncing.constants import (
-    SEARCH_YAW,
     SEARCH_FIND_TOLERANCE,
     SEARCH_LIMITE_ALTITUDE,
     SEARCH_TARGET_ALTITUDE,
@@ -121,16 +120,6 @@ class Search(State):
                             return SUCCEED
 
                 if count_to_next_point >= SEARCH_PHOTOS_PER_POINT:
-                    if SEARCH_YAW and not has_rotated:
-                        has_rotated = True
-                        yasmin.YASMIN_LOG_INFO("Rotating 90 degrees to go to next point...")
-                        drone.move_to(
-                            x = 0.0,
-                            y = 0.0,
-                            z = 0.0,
-                            yaw = 90,
-                        )
-
                     count_to_next_point = 0
                     point_index += 1
                     if point_index >= len(SEARCH_POINTS):
@@ -146,16 +135,6 @@ class Search(State):
 
                 if (drone.get_altitude() >= SEARCH_TARGET_ALTITUDE):
                     count_to_next_point += 1
-
-                if SEARCH_POINTS[point_index]['x'] == 0.0 and SEARCH_POINTS[point_index]['y'] == 0.0:
-                    error_x, error_y = self.get_takeoff_base_error(result, drone.get_altitude())
-                    output_x = self.pid_x.update(error_x)
-                    output_y = self.pid_y.update(error_y)
-                    yasmin.YASMIN_LOG_INFO(f'Takeoff base: error_x={error_x:.2f}, error_y={error_y:.2f}, output_x={output_x:.2f}, output_y={output_y:.2f}')
-
-                else:
-                    output_x = 0.0
-                    output_y = 0.0
                 
                 if (drone.get_altitude() < SEARCH_TARGET_ALTITUDE):
                     output_z = SEARCH_VERTICAL_SPEED
@@ -164,8 +143,8 @@ class Search(State):
                     output_z = 0.0
 
                 drone.move_velocity(
-                    vx = output_x,
-                    vy = output_y,
+                    vx = 0.0,
+                    vy = 0.0,
                     vz = output_z,
                     vyaw = 0.0,
                 )
@@ -249,17 +228,16 @@ class Search(State):
 
 
     def get_number_of_aruco(self, img):
-        return 25
         if img is None:
             return None
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         dict_options = [
-            cv2.aruco.DICT_5X5_50,
-            cv2.aruco.DICT_5X5_100,
-            cv2.aruco.DICT_5X5_250,
             cv2.aruco.DICT_5X5_1000,
+            cv2.aruco.DICT_5X5_250,
+            cv2.aruco.DICT_5X5_100,
+            cv2.aruco.DICT_5X5_50,
         ]
 
         parameters = cv2.aruco.DetectorParameters()
@@ -271,6 +249,7 @@ class Search(State):
             corners, ids, _ = detector.detectMarkers(gray)
 
             if ids is not None:
+                yasmin.YASMIN_LOG_INFO(f'Aruco detected: ids={ids.flatten()}')
                 return ids.flatten()
 
         return None
