@@ -54,10 +54,10 @@ PRECISE_LIMITE_RECOVERY = 6.0  # m
 PRECISE_HOVER_COUNT = 5  # number of consecutive detections to consider the landing successful
 PRECISE_RESET_PID = 2  # number of detections lost to reset the PID controller
 PRECISE_LOST_TOLERANCE = 5
-PRECISE_TIMEOUT = 5 * 60  # s
+PRECISE_TIMEOUT = 4 * 60  # s
 PRECISE_VERTICAL_SPEED = 0.1  # m/s
 PRECISE_DOWN_TOLERANCE_PX = 200  # px
-PRECISE_ALING_TOLERANCE = 0.05  # m
+PRECISE_ALING_TOLERANCE = 0.07  # m
 PRECISE_LAND_ALTITUDE = 1.1  # m
 
 CONTROLER_P_XY = 0.4
