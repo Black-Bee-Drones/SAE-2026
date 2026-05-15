@@ -1,3 +1,4 @@
+from operator import index
 import cv2
 import time
 from yasmin import Blackboard, State
@@ -33,8 +34,8 @@ class GaugeReading(State):
         self,
         model_path: str,
         coarse_model_path: str,
-        confidence_threshold: float = 0.7,
-        coarse_confidence_threshold: float = 0.6,
+        confidence_threshold: float = 0.4,
+        coarse_confidence_threshold: float = 0.4,
     ):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.node = YasminNode.get_instance()
@@ -235,7 +236,18 @@ class GaugeReading(State):
 
         self.cam = blackboard["cam"]
         if self.cam is None:
-            self.cam = cv2.VideoCapture(0)
+            index = 0
+            try:
+                os.system(f"v4l2-ctl -d /dev/video{index} -c auto_exposure=1")
+                time.sleep(0.5)
+                os.system(f"v4l2-ctl -d /dev/video{index} -c backlight_compensation=0")
+                os.system(f"v4l2-ctl -d /dev/video{index} -c exposure_dynamic_framerate=0")
+                os.system(f"v4l2-ctl -d /dev/video{index} -c exposure_time_absolute=1")
+                os.system(f"v4l2-ctl -d /dev/video{index} --set-fmt-video=width=640,height=480,pixelformat=YUYV")
+            except:
+                pass
+            
+            self.cam = cv2.VideoCapture(index, cv2.CAP_V4L2)
 
         self.node.get_logger().info("[GaugeReading] Centering on manometer...")
         centered = self._center_on_manometer(blackboard=blackboard)
