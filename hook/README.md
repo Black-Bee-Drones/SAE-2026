@@ -112,8 +112,10 @@ stateDiagram-v2
     RELEASE --> end_branch
     end_branch --> RETURN_TO_LAUNCH: end=rtl
     end_branch --> LAND: end=land
+    end_branch --> PRECISION_LAND: end=precision_land
     end_branch --> [*]: end=none
     RETURN_TO_LAUNCH --> LAND
+    PRECISION_LAND --> LAND
     LAND --> [*]
 ```
 
@@ -128,6 +130,7 @@ stateDiagram-v2
 | LOWER_AND_ALIGN  | `lower_and_align` | [hook/states/lower_and_align.py](hook/states/lower_and_align.py)      | Three image-frame PIDs (rope angle → `vyaw`; hose row → `vx`; sphere anchor → `vy`) plus a symmetric `vz` controller around `RELEASE_ALTITUDE` during the descent phase, all on the same controller stack. Three internal phases: `yaw` (only `vyaw` while `\|angle\| > ALIGN_YAW_FIRST_TOLERANCE_DEG`), `align` (full `(vx, vy, vyaw)` with `standoff = ALIGN_STANDOFF_M`, `vz = 0`; exits to descend after `HOSE_ALIGN_CONFIRMATIONS` ticks within tol), and `descend` (same controllers; standoff ramps `ALIGN_STANDOFF_M → 0` over `DESCEND_STANDOFF_RAMP_TICKS`; `vz = -clip(DESCEND_VZ_KP·(alt − RELEASE_ALTITUDE), VZ_MIN, VZ_MAX) · sign(alt − RELEASE_ALTITUDE)` with a `±RELEASE_ALTITUDE_TOLERANCE_M` deadband — drone climbs back into the band if it undershoots; SUCCEED on `\|alt − RELEASE_ALTITUDE\| ≤ RELEASE_ALTITUDE_TOLERANCE_M` AND lateral/angle within tol for `DESCEND_RELEASE_CONFIRMATIONS` frames). Sphere-loss fallback (uniform across phases): if the sphere is missing OR `target_sphere_cx` leaves `[DESCEND_SPHERE_TARGET_MARGIN_PX, IMAGE_WIDTH − margin]`, the anchor PID is disabled (`vy = 0`, `anchor_ok = True`) and `pick_hose_by_dir` falls back to the most-confident `rose`. Sphere loss does NOT abort. Chosen-rope loss escalates: at `LOWER_RECOVERY_LOST_FRAMES` consecutive misses the state commands `+LOWER_RECOVERY_VZ` (climb) instead of descending/hovering to widen the FOV; at `LOWER_MAX_LOST_FRAMES` it aborts. |
 | RELEASE          | `release`         | [hook/states/release_hook.py](hook/states/release_hook.py)            | Stop motion, drive `SERVO_CHANNEL` from `HOLD_PWM` to `RELEASE_PWM`. |
 | RETURN_TO_LAUNCH | (suffix)          | [hook/core/states.py](hook/core/states.py)                            | `drone.rtl(altitude=RTL_ALTITUDE, method=NAVIGATE, land=False)`. |
+| PRECISION_LAND   | (suffix)          | [hook/states/precision_land.py](hook/states/precision_land.py)        | Three phases. `rtl`: `move_to(0, 0, PRECISION_LAND_RTL_ALTITUDE)` against TAKEOFF reference via PID_EKF. `align`: hover at RTL altitude, drive the blue-base centroid (class 7 from `best_7_class.pt`) onto the image center with two metric P-controllers until `\|err\| < PRECISION_LAND_TOL_M` for `PRECISION_LAND_INIT_CONFIRMATIONS` frames. `descend`: `vz = -clip(VZ_KP·(alt - target), 0, VZ_MAX)` toward `PRECISION_LAND_TARGET_ALTITUDE` while xy stays centered; SUCCEED when `alt ≤ target + ALT_TOLERANCE_M` AND `\|err\| < PRECISION_LAND_TOL_M` for `PRECISION_LAND_LAND_CONFIRMATIONS` frames. Hands off to `LAND` for the actual touchdown; ABORT routes to `LAND` so the drone always lands. |
 | LAND             | (suffix)          | [hook/core/states.py](hook/core/states.py)                            | `drone.land()` then close camera. |
 
 ## APPROACH — radial setpoint, metric PIDs, safety
@@ -457,6 +460,7 @@ End-branch:
 
 - `rtl` (default): `RETURN_TO_LAUNCH → LAND`.
 - `land`: `LAND` immediately.
+- `precision_land`: `PRECISION_LAND → LAND` — RTL to `(0, 0, PRECISION_LAND_RTL_ALTITUDE)`, then visually align on the blue base (detector model, class 7) and descend with a proportional `vz` (capped at `PRECISION_LAND_VZ_MAX`) until `alt ≤ PRECISION_LAND_TARGET_ALTITUDE + ALT_TOLERANCE_M` AND the lateral error stays under `PRECISION_LAND_TOL_M`. Hands off to `LAND` for touchdown.
 - `none`: SM terminates; the drone is left in whatever state the last stage
   finished in. Useful to inspect convergence in sim.
 
@@ -537,6 +541,7 @@ hook/
       orient_to_hook.py       # predictive yaw (closest perpendicular + in-front)
       lower_and_align.py      # merged stand-off align + LIDAR descent
       release_hook.py
+      precision_land.py       # end-branch: RTL + visual base-aligned descent
   launch/
     sae_hook.launch.py        # Gazebo + MAVROS, drone/sphere pose CLI args
   simulation/worlds/
@@ -669,6 +674,24 @@ requirement); only the standoff target and `vz` change between phases.
 | `DESCEND_RELEASE_CONFIRMATIONS` | 5 |
 | `DESCEND_TIMEOUT` | 120 s (descend phase only) |
 
+### PRECISION_LAND
+| Name | Value | Notes |
+|---|---|---|
+| `PRECISION_LAND_MODEL_PATH` | `share/models/best_7_class.pt` | 8-class detector; only class 7 (blue base) is consumed |
+| `PRECISION_LAND_CLASS_ID` | `7` | blue base |
+| `PRECISION_LAND_CONF` / `PRECISION_LAND_IOU` / `PRECISION_LAND_IMGSZ` | 0.25 / 0.5 / 960 | |
+| `PRECISION_LAND_RTL_ALTITUDE` | 4.0 m | altitude held during the `rtl` and `align` phases |
+| `PRECISION_LAND_TARGET_ALTITUDE` | 0.6 m | descent target; LAND is fired once `alt ≤ target + ALT_TOLERANCE_M` |
+| `PRECISION_LAND_ALT_TOLERANCE_M` | 0.15 m | altitude band around `TARGET_ALTITUDE` for the SUCCEED check |
+| `PRECISION_LAND_BASE_HEIGHT_M` | 0.0 m | base is flat on the ground; ppm uses target depth = altitude |
+| `PRECISION_LAND_KP` / `PRECISION_LAND_MAX_VELOCITY_XY` | 0.32 m/s/m / 0.18 m/s | lateral P-controllers |
+| `PRECISION_LAND_TOL_M` | 0.24 m | lateral alignment band (both phases) |
+| `PRECISION_LAND_INIT_CONFIRMATIONS` | 5 | align → descend transition |
+| `PRECISION_LAND_LAND_CONFIRMATIONS` | 5 | descend → SUCCEED transition |
+| `PRECISION_LAND_VZ_KP` / `PRECISION_LAND_VZ_MAX` | 0.20 m/s/m / 0.17 m/s | proportional descent capped at 0.17 m/s |
+| `PRECISION_LAND_MAX_LOST_FRAMES` | 60 | base-loss tolerance per phase before ABORT |
+| `PRECISION_LAND_TIMEOUT` | 120 s | per-phase timeout |
+
 ### Servo
 | Name | Value |
 |---|---|
@@ -710,9 +733,15 @@ trained on classes `sphere` and `rose`. Best thresholds: `sphere=0.70`,
 `rose=0.40`, `iou=0.6`, `imgsz=960`. Model card:
 [blackbeedrones/sae-2026-hang-all-yolo26n-seg-v2-960](https://huggingface.co/blackbeedrones/sae-2026-hang-all-yolo26n-seg-v2-960/blob/main/SUMMARY.md).
 
-The path is resolved at runtime via
-`get_package_share_directory("hook") / "models" / ...`. The weights file is
-committed to git (see `.gitignore` at the SAE-2026 repo root).
+`share/models/best_7_class.pt` — 8-class YOLO detector. The `PRECISION_LAND`
+state consumes class `7` (blue takeoff/return base) only; all other class
+IDs are ignored. Replace with a base-only model when one is available — the
+state reads ``PRECISION_LAND_CLASS_ID`` and ``PRECISION_LAND_MODEL_PATH``
+from [hook/core/constants.py](hook/core/constants.py).
+
+The paths are resolved at runtime via
+`get_package_share_directory("hook") / "models" / ...`. The weights files
+are committed to git (see `.gitignore` at the SAE-2026 repo root).
 
 ## Build / install
 

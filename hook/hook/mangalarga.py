@@ -9,18 +9,37 @@ Run the full pipeline or any contiguous prefix of stages, picked via CLI:
     ros2 run hook mangalarga --stages search_ascend,approach --end land
     ros2 run hook mangalarga --end none                   # full mission, no auto end
     ros2 run hook mangalarga --list                       # print stage names
+
+Ctrl+C handling (competition safety requirement)
+------------------------------------------------
+Yasmin's ``StateMachine.__call__`` calls ``sigaction(SIGINT, ...)`` at
+runtime, so any Python ``signal.signal(SIGINT, ...)`` is silently
+overridden once the SM starts. Yasmin's own SIGINT handler does not
+trigger emergency land — it just exits.
+
+Workaround: split into two processes. The parent (this script) does
+nothing but spawn the SM in a child with ``start_new_session=True`` and
+forward Ctrl+C as SIGTERM. The child runs the SM with a SIGTERM handler
+that lands the drone (Yasmin does not intercept SIGTERM). Second Ctrl+C
+escalates to SIGKILL.
 """
 import argparse
+import os
+import signal
+import subprocess
 import sys
 from typing import List, Tuple, Type
 
 import rclpy
-from yasmin import State, StateMachine
+from rclpy.signals import SignalHandlerOptions
+from yasmin import Blackboard, State, StateMachine
 from yasmin_ros.basic_outcomes import ABORT, SUCCEED
 from yasmin_viewer import YasminViewerPub
 
 from hook.core.states import Initialize, Land, ReturnToLaunch, Takeoff
-from hook.states import STAGES
+from hook.states import STAGES, PrecisionLand
+
+_CHILD_ENV = "HOOK_MANGALARGA_CHILD"
 
 
 def _resolve_stages(spec: str) -> List[Tuple[str, Type[State]]]:
@@ -66,6 +85,9 @@ def build_sm(stages: List[Tuple[str, Type[State]]], end: str) -> StateMachine:
     elif end == "land":
         success_terminal = "LAND"
         abort_terminal = "LAND"
+    elif end == "precision_land":
+        success_terminal = "PRECISION_LAND"
+        abort_terminal = "PRECISION_LAND"
     elif end == "none":
         success_terminal = SUCCEED
         abort_terminal = ABORT
@@ -106,6 +128,15 @@ def build_sm(stages: List[Tuple[str, Type[State]]], end: str) -> StateMachine:
             "LAND", Land(),
             transitions={SUCCEED: SUCCEED, ABORT: ABORT},
         )
+    elif end == "precision_land":
+        sm.add_state(
+            "PRECISION_LAND", PrecisionLand(),
+            transitions={SUCCEED: "LAND", ABORT: "LAND"},
+        )
+        sm.add_state(
+            "LAND", Land(),
+            transitions={SUCCEED: SUCCEED, ABORT: ABORT},
+        )
 
     sm.set_start_state("INITIALIZE")
     return sm
@@ -118,7 +149,7 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
         help="contiguous prefix of stages: 'all', '<name>', or '<n1>,<n2>,...'",
     )
     parser.add_argument(
-        "--end", default="rtl", choices=["rtl", "land", "none"],
+        "--end", default="rtl", choices=["rtl", "land", "precision_land", "none"],
         help="what to do after the last stage (default: rtl)",
     )
     parser.add_argument(
@@ -128,34 +159,110 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main():
+def _emergency_land(blackboard: Blackboard) -> None:
+    """Unconditional land on the drone stored in ``blackboard``.
+
+    Safety hook for Ctrl+C — competition rules require the drone to land
+    when the operator interrupts the mission, regardless of the active
+    state. No-op if the drone hasn't been created yet (e.g., Ctrl+C
+    during INITIALIZE).
+    """
+    if not blackboard.contains("drone"):
+        return
+    try:
+        blackboard["drone"].move_velocity(0.0, 0.0, 0.0, 0.0, duration=1.0)
+        blackboard["drone"].land()
+    except Exception as e:
+        print(f"Emergency land failed: {e}")
+
+
+def _parent_main() -> int:
+    """Spawn the SM child, forward Ctrl+C as SIGTERM."""
     argv = rclpy.utilities.remove_ros_args(sys.argv)[1:]
     args = _parse_args(argv)
-
     if args.list:
         for name, _ in STAGES:
             print(name)
-        return
+        return 0
 
+    env = os.environ.copy()
+    env[_CHILD_ENV] = "1"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "hook.mangalarga"] + sys.argv[1:],
+        env=env,
+        start_new_session=True,
+    )
+
+    sigint_count = [0]
+
+    def _on_sigint(signum, frame):
+        sigint_count[0] += 1
+        if sigint_count[0] == 1:
+            print("\nCtrl+C: emergency land...", flush=True)
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        else:
+            print("\nDouble Ctrl+C: force kill.", flush=True)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    signal.signal(signal.SIGINT, _on_sigint)
+    signal.signal(signal.SIGTERM, _on_sigint)
+    return proc.wait()
+
+
+def _child_main() -> None:
+    """Run the SM with a SIGTERM handler that emergency-lands the drone."""
+    argv = rclpy.utilities.remove_ros_args(sys.argv)[1:]
+    args = _parse_args(argv)
     stages = _resolve_stages(args.stages)
 
-    rclpy.init()
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    blackboard = Blackboard()
+    landing = {"in_progress": False}
+
+    def _on_sigterm(signum, frame):
+        if landing["in_progress"]:
+            os._exit(1)
+        landing["in_progress"] = True
+        print("\nEmergency land triggered.", flush=True)
+        _emergency_land(blackboard)
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
     try:
         sm = build_sm(stages, args.end)
+        sm.set_sigint_handler(False)
         # YasminViewerPub(sm, fsm_name="hang_the_wire")
 
         names = ", ".join(n for n, _ in stages) or "<none>"
         print(f"\nStarting mission: stages=[{names}] end={args.end}\n")
-        outcome = sm()
+        outcome = sm(blackboard)
         print(f"\nMission finished: {outcome}")
-
-    except KeyboardInterrupt:
-        print("\nMission interrupted by user.")
     except Exception as e:
         print(f"\nMission failed: {e}")
     finally:
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
         print("Shutdown complete.")
+
+
+def main():
+    if os.environ.get(_CHILD_ENV) == "1":
+        _child_main()
+    else:
+        sys.exit(_parent_main())
 
 
 if __name__ == "__main__":

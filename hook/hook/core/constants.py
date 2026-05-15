@@ -5,11 +5,11 @@ import numpy as np
 from ament_index_python.packages import get_package_share_directory
 
 # --- Altitude (meters) ---
-INITIAL_TAKEOFF_ALTITUDE = 3
-MAX_ASCEND_ALTITUDE = 7.0
+INITIAL_TAKEOFF_ALTITUDE = 4.5
+MAX_ASCEND_ALTITUDE = 6.2
 WORK_ALTITUDE = 3.4
-RELEASE_ALTITUDE = 1.94
-RTL_ALTITUDE = 2.7
+RELEASE_ALTITUDE = 2.05
+RTL_ALTITUDE = 3.0
 
 # --- Camera (Arducam 2MP IMX662, USB) ---
 # Specs: 1920x1080, FOV 102(D) x 86(H) x 47(V), EFL 3.9mm, F1.0
@@ -40,7 +40,7 @@ CAMERA_TO_HOOK_BODY_Y_M = 0.09  # hook 10 cm to the left of camera
 
 # Used by px_per_meter_x / px_per_meter_y to remove the parallax error
 # (target plane height instead of the ground plane).
-SPHERE_HEIGHT_M = 1.4  # sphere mounted on hose at top of supports
+SPHERE_HEIGHT_M = 1.7  # sphere mounted on hose at top of supports
 
 # Pixel <-> meter conversion strategy. Selects one of three implementations
 # in :mod:`hook.core.camera_scaling`:
@@ -80,7 +80,7 @@ CAMERA_INTRINSIC_DIST = np.array(
 SEG_MODEL_PATH = os.path.join(
     get_package_share_directory("hook"),
     "models",
-    "sae-2026-hang-all-yolo26n-seg-v2-960.engine",
+    "sae-2026-hang-all-yolo26n-seg-v2-960.pt",
 )
 SEG_IMGSZ = 960
 SEG_IOU = 0.6
@@ -93,14 +93,14 @@ HOSE_CONF = 0.4
 SEG_PREDICT_CONF = min(SPHERE_CONF, HOSE_CONF)
 
 # Search and ascend
-ASCEND_VELOCITY = 0.3  # m/s upward while searching
-ASCENT_STOP_CONFIRMATIONS = 10
+ASCEND_VELOCITY = 0.19  # m/s upward while searching
+ASCENT_STOP_CONFIRMATIONS = 6
 ASCENT_TIMEOUT = 80.0  # seconds
 # After hitting MAX_ASCEND_ALTITUDE without a sphere debounce, the state
 # switches to yaw-search at this rate (FLU, +vyaw = CCW) until the sphere
 # is detected or ASCENT_TIMEOUT fires. Covers the case where the takeoff
 # yaw leaves the sphere outside the camera frustum.
-ASCEND_YAW_RATE_RAD_S = 0.15
+ASCEND_YAW_RATE_RAD_S = 0.11
 
 # Approach sphere
 APPROACH_TARGET_DISTANCE_M = 0.75  # parked hook-to-sphere horizontal distance
@@ -116,7 +116,7 @@ APPROACH_TIMEOUT = 180  # seconds
 APPROACH_MAX_LOST_FRAMES = 60
 
 # Hose side selection
-SIDE_SAMPLE_FRAMES = 20
+SIDE_SAMPLE_FRAMES = 9
 SIDE_LENGTH_RATIO = 1.4
 SIDE_TIMEOUT = 30.0
 
@@ -213,6 +213,34 @@ DESCEND_STANDOFF_RAMP_TICKS = 10
 # off the image; below the cutoff the drone has already aligned, so we hold
 # vy=0 (FCU position-hold) and finish descent on hose-only references.
 DESCEND_SPHERE_TARGET_MARGIN_PX = 100
+
+# Precision land (visual alignment on the blue base)
+PRECISION_LAND_MODEL_PATH = os.path.join(
+    get_package_share_directory("hook"),
+    "models",
+    "best_7_class.pt",
+)
+PRECISION_LAND_CLASS_ID = 7
+PRECISION_LAND_CONF = 0.5
+PRECISION_LAND_IOU = 0.5
+PRECISION_LAND_IMGSZ = 960
+
+PRECISION_LAND_RTL_ALTITUDE = 4.0
+PRECISION_LAND_TARGET_ALTITUDE = 0.6
+PRECISION_LAND_ALT_TOLERANCE_M = 0.15
+PRECISION_LAND_BASE_HEIGHT_M = 0.0
+
+PRECISION_LAND_KP = 0.32
+PRECISION_LAND_MAX_VELOCITY_XY = 0.18
+PRECISION_LAND_TOL_M = 0.24
+PRECISION_LAND_INIT_CONFIRMATIONS = 5
+PRECISION_LAND_LAND_CONFIRMATIONS = 5
+
+PRECISION_LAND_VZ_KP = 0.20
+PRECISION_LAND_VZ_MAX = 0.17
+
+PRECISION_LAND_MAX_LOST_FRAMES = 60
+PRECISION_LAND_TIMEOUT = 120.0
 
 # Servo
 SERVO_CHANNEL = 3

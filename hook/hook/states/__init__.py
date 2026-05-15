@@ -1,6 +1,7 @@
 from hook.states.approach_sphere import ApproachSphere
 from hook.states.lower_and_align import LowerAndAlign
 from hook.states.orient_to_hook import OrientToHook
+from hook.states.precision_land import PrecisionLand
 from hook.states.release_hook import ReleaseHook
 from hook.states.search_and_ascend import SearchAndAscend
 from hook.states.select_hose_side import SelectHoseSide
@@ -21,5 +22,6 @@ __all__ = [
     "SelectHoseSide",
     "OrientToHook",
     "LowerAndAlign",
+    "PrecisionLand",
     "ReleaseHook",
 ]

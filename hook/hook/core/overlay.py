@@ -534,6 +534,62 @@ def draw_orient(
     draw_hud(img, lines, anchor="tl")
 
 
+def draw_precision_land(
+    img: np.ndarray,
+    *,
+    image_center: Tuple[int, int],
+    base_center: Optional[Tuple[float, float]],
+    base_bbox: Optional[Iterable[int]],
+    altitude: Optional[float],
+    target_altitude: float,
+    err_x_m: float,
+    err_y_m: float,
+    err_total_m: float,
+    tol_m: float,
+    phase: str,
+    confirmations: int,
+    target_confirmations: int,
+    vx: float,
+    vy: float,
+    vz: float,
+) -> None:
+    """PRECISION_LAND composite overlay (modifies ``img`` in place).
+
+    Renders the detected blue-base bbox + centroid, an arrow from the
+    base centroid to the image center, the image-center cross, and a
+    HUD with phase / altitude / errors in meters / commanded velocities.
+    """
+    if base_bbox is not None:
+        x1, y1, x2, y2 = [int(v) for v in base_bbox]
+        cv2.rectangle(img, (x1, y1), (x2, y2), COLOR_TARGET_SPHERE, 3)
+    if base_center is not None:
+        bx, by = int(base_center[0]), int(base_center[1])
+        cv2.circle(img, (bx, by), 6, COLOR_SPHERE, -1)
+        cv2.arrowedLine(
+            img,
+            (bx, by),
+            image_center,
+            COLOR_ERR_VY,
+            2,
+            tipLength=0.15,
+            line_type=cv2.LINE_AA,
+        )
+    _draw_image_center(img, image_center)
+
+    alt_txt = f"{altitude:.2f}m" if altitude is not None else "n/a"
+    vz_line = f"  vz={vz:+.2f}" if phase == "descend" else ""
+    draw_hud(
+        img,
+        [
+            f"PRECISION_LAND[{phase:>7s}]  alt={alt_txt}  target={target_altitude:.2f}m",
+            f"err: x={err_x_m:+.3f}m  y={err_y_m:+.3f}m  total={err_total_m:.3f}m  tol={tol_m:.2f}m",
+            f"conf: {confirmations}/{target_confirmations}",
+            f"cmd: vx={vx:+.2f}  vy={vy:+.2f}{vz_line}",
+        ],
+        anchor="tl",
+    )
+
+
 def draw_select_side(
     img: np.ndarray,
     *,
