@@ -22,7 +22,9 @@ Image-to-body convention (down camera, FLU body):
   image +x -> body -y (right)
 """
 
+import gc
 import math
+import threading
 import time
 from typing import Optional, Tuple
 
@@ -92,6 +94,8 @@ class PrecisionLand(State):
         self.pid_y: Optional[PIDController] = None
         self.detector: Optional[Detector] = None
         self.sink: FrameSink = None
+        self._load_done: Optional[threading.Event] = None
+        self._load_error: Optional[BaseException] = None
 
     def execute(self, blackboard: Blackboard):
         drone: MavrosDrone = blackboard["drone"]
@@ -100,9 +104,14 @@ class PrecisionLand(State):
         self.sink = build_state_sink(blackboard, "precision_land")
 
         try:
+            # Load the detector in parallel with the RTL move so the heavy
+            # YOLO startup is hidden under the drone's travel time. The
+            # worker also frees the segmentor first to keep GPU memory low.
+            self._start_detector_load(blackboard)
+
             if not self._rtl_to_origin(drone):
                 return ABORT
-            if not self._load_detector():
+            if not self._wait_detector():
                 return ABORT
             if not self._align_initial(drone, camera):
                 return ABORT
@@ -127,22 +136,92 @@ class PrecisionLand(State):
         drone.delay(1.0)
         return True
 
-    def _load_detector(self) -> bool:
+    def _start_detector_load(self, blackboard: Blackboard) -> None:
+        """Spawn a daemon thread that frees the segmentor and loads the
+        detector. Re-entry safe: a no-op if the load is already running or
+        the detector is already loaded.
+        """
+        if self.detector is not None or self._load_done is not None:
+            return
+        self._load_done = threading.Event()
+        self._load_error = None
+        yasmin.YASMIN_LOG_INFO(
+            f"Preloading blue-base detector in background: "
+            f"{PRECISION_LAND_MODEL_PATH}"
+        )
+        threading.Thread(
+            target=self._detector_load_worker,
+            args=(blackboard,),
+            daemon=True,
+            name="precision-land-detector-loader",
+        ).start()
+
+    def _detector_load_worker(self, blackboard: Blackboard) -> None:
+        try:
+            self._free_segmentor(blackboard)
+            t0 = time.perf_counter()
+            detector = Detector(
+                PRECISION_LAND_MODEL_PATH,
+                confidence_threshold=PRECISION_LAND_CONF,
+            )
+            detector.load()
+            detector.detect(
+                np.zeros(
+                    (PRECISION_LAND_IMGSZ, PRECISION_LAND_IMGSZ, 3),
+                    dtype=np.uint8,
+                ),
+                conf=PRECISION_LAND_CONF,
+                iou=PRECISION_LAND_IOU,
+            )
+            self.detector = detector
+            yasmin.YASMIN_LOG_INFO(
+                f"Detector ready after {time.perf_counter() - t0:.2f}s "
+                f"(background)."
+            )
+        except BaseException as e:
+            self._load_error = e
+        finally:
+            self._load_done.set()
+
+    @staticmethod
+    def _free_segmentor(blackboard: Blackboard) -> None:
+        """Drop the segmentor reference and reclaim its GPU memory.
+
+        Cheap insurance for tight GPU budgets (e.g., Jetson Orin Nano):
+        after RELEASE the segmentation model is unused for the rest of
+        the mission, so freeing it before loading the detector keeps
+        peak GPU memory at one model.
+        """
+        if blackboard.contains("segmentor"):
+            try:
+                blackboard.remove("segmentor")
+            except Exception:
+                blackboard["segmentor"] = None
+        if blackboard.contains("class_filter"):
+            try:
+                blackboard.remove("class_filter")
+            except Exception:
+                blackboard["class_filter"] = None
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def _wait_detector(self) -> bool:
         if self.detector is not None:
             return True
-        yasmin.YASMIN_LOG_INFO(
-            f"Loading blue-base detector: {PRECISION_LAND_MODEL_PATH}"
-        )
-        self.detector = Detector(
-            PRECISION_LAND_MODEL_PATH, confidence_threshold=PRECISION_LAND_CONF
-        )
-        self.detector.load()
-        self.detector.detect(
-            np.zeros((PRECISION_LAND_IMGSZ, PRECISION_LAND_IMGSZ, 3), dtype=np.uint8),
-            conf=PRECISION_LAND_CONF,
-            iou=PRECISION_LAND_IOU,
-        )
-        return True
+        if self._load_done is None:
+            return False
+        self._load_done.wait()
+        if self._load_error is not None:
+            yasmin.YASMIN_LOG_ERROR(
+                f"Detector load failed: {self._load_error}"
+            )
+            return False
+        return self.detector is not None and self.detector.is_loaded
 
     def _ensure_pids(self) -> None:
         if self.pid_x is None:

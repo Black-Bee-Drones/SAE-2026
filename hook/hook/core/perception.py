@@ -43,6 +43,23 @@ from hook.core.constants import (
     SPHERE_HEIGHT_M,
 )
 
+# Sphere is orange/red (mean BGR ≈ 30/100/220, so B/R ≈ 0.15). Blue takeoff
+# base is blue (mean BGR ≈ 150/80/40, B/R ≈ 3-4). Any sphere candidate whose
+# masked region has B/R above this is the base, not the sphere.
+_SPHERE_MAX_BLUE_RED_RATIO = 1.5
+_SPHERE_MIN_MASK_PIXELS = 20
+
+
+def _is_blue_dominant(frame: np.ndarray, mask: Optional[np.ndarray]) -> bool:
+    if frame is None or mask is None:
+        return False
+    m = (mask > 0).astype(np.uint8)
+    if int(m.sum()) < _SPHERE_MIN_MASK_PIXELS:
+        return False
+    mean_bgr = cv2.mean(frame, mask=m)
+    b, _, r = mean_bgr[0], mean_bgr[1], mean_bgr[2]
+    return b > r * _SPHERE_MAX_BLUE_RED_RATIO
+
 
 def run_seg(
     camera: ImageHandler,
@@ -54,6 +71,9 @@ def run_seg(
     Predict is run at SEG_PREDICT_CONF (= min per-class threshold) so YOLO
     can prune candidates server-side before NMS / mask decoding. The
     PerClassConfidenceFilter then enforces stricter per-class cutoffs.
+    A final colour gate drops any ``sphere`` whose masked region is
+    blue-dominant — the takeoff base is the only known false-positive
+    geometry the segmentor flips to ``sphere`` on Jetson FP16 engines.
     """
     frame = camera.take_photo()
     if frame is None:
@@ -78,6 +98,10 @@ def run_seg(
         model_name=getattr(segmentor, "model_source", None),
         image=frame,
     )
+    result.segmentations = [
+        s for s in result.segmentations
+        if s.class_name != SPHERE_CLASS or not _is_blue_dominant(frame, s.mask)
+    ]
     return frame, result
 
 
