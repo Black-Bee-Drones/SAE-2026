@@ -121,11 +121,11 @@ stateDiagram-v2
 |------------------|-------------------|-----------------------------------------------------------------------|--------------|
 | INITIALIZE       | (prefix)          | [hook/core/states.py](hook/core/states.py)                            | Build `MavrosDrone` (SITL or GPS), open camera (`/down_camera/compressed` in sim, OpenCV otherwise), load segmentor, build per-class confidence filter. |
 | TAKEOFF          | (prefix)          | [hook/core/states.py](hook/core/states.py)                            | Arm + take off to `INITIAL_TAKEOFF_ALTITUDE`. |
-| SEARCH_ASCEND    | `search_ascend`   | [hook/states/search_and_ascend.py](hook/states/search_and_ascend.py)  | Hover, run segmentor; ascend at `ASCEND_VELOCITY` (capped at `MAX_ASCEND_ALTITUDE`) until `ASCENT_STOP_CONFIRMATIONS` consecutive sphere detections. |
+| SEARCH_ASCEND    | `search_ascend`   | [hook/states/search_and_ascend.py](hook/states/search_and_ascend.py)  | Two-phase. `ascend`: rise at `ASCEND_VELOCITY` until `ASCENT_STOP_CONFIRMATIONS` consecutive sphere detections OR altitude reaches `MAX_ASCEND_ALTITUDE`. `yaw_search`: at the cap, stop climbing and rotate at `ASCEND_YAW_RATE_RAD_S` until the same debounce fires. Same SUCCEED path in both phases; `ASCENT_TIMEOUT` bounds the whole state. Covers the case where the takeoff yaw leaves the sphere outside the camera frustum. |
 | APPROACH         | `approach`        | [hook/states/approach_sphere.py](hook/states/approach_sphere.py)      | Step 1 (lateral): capture bearing unit `(ux0, uy0)` over `APPROACH_INIT_BEARING_FRAMES` detections; two metric PIDs drive the sphere onto a radial setpoint at `APPROACH_TARGET_DISTANCE_M`. Step 2 (descent): same PIDs while descending at `APPROACH_DESCEND_VELOCITY` until `LIDAR ≤ WORK_ALTITUDE`. Stores `approach_bearing_unit` and `approach_image_offset`. |
 | SELECT_SIDE      | `select_side`     | [hook/states/select_hose_side.py](hook/states/select_hose_side.py)    | Decision-only (no movement). Sample `SIDE_SAMPLE_FRAMES` frames; lock rope long-axis from the most-confident `rose`; bucket each `rose` instance by sign of its centroid projection onto that axis from the sphere; pick side with greater accumulated long-axis length. Tie (`ratio < SIDE_LENGTH_RATIO`) → fallback to side anti-aligned with `approach_image_offset`. Stores `hose_side_image_unit` and `anchor_sign` (predicted from sign of `side_unit.x`). |
 | ORIENT_TO_HOOK   | `orient_to_hook`  | [hook/states/orient_to_hook.py](hook/states/orient_to_hook.py)        | Predictive yaw, vision-only, anisotropic-correct. Sample `ORIENT_SAMPLE_FRAMES` good frames; per frame compute `Δ = predict_orient_yaw(side_unit, sphere_xy, ppm_x, ppm_y)` — the closest **body** yaw that makes the rope horizontal in image AND keeps the sphere in the upper half. Vector-mean across frames. If `\|Δ\| < ORIENT_SKIP_THRESHOLD_RAD`: SUCCEED with no rotation. Otherwise spin: PID drives the cumulative body yaw (computed from the sphere's body-frame polar angle, anisotropic-deprojected) to `Δ_target`. Converges when `\|err\| < ORIENT_ANGLE_TOLERANCE_RAD` for `ORIENT_CONFIRMATIONS` frames. On success rotates `hose_side_image_unit` by the OBSERVED body-yaw delta (anisotropic image transformation) and refreshes `anchor_sign` so `LOWER_AND_ALIGN` sees the post-spin body frame transparently. Sphere-loss tolerant (holds last `vyaw` for up to `ORIENT_MAX_LOST_FRAMES` frames). |
-| LOWER_AND_ALIGN  | `lower_and_align` | [hook/states/lower_and_align.py](hook/states/lower_and_align.py)      | Three image-frame PIDs (rope angle → `vyaw`; hose row → `vx`; sphere anchor → `vy`) plus altitude-proportional `vz` during the descent phase, all on the same controller stack. Three internal phases: `yaw` (only `vyaw` while `\|angle\| > ALIGN_YAW_FIRST_TOLERANCE_DEG`), `align` (full `(vx, vy, vyaw)` with `standoff = ALIGN_STANDOFF_M`, `vz = 0`; exits to descend after `HOSE_ALIGN_CONFIRMATIONS` ticks within tol), and `descend` (same controllers; standoff ramps `ALIGN_STANDOFF_M → 0` over `DESCEND_STANDOFF_RAMP_TICKS`; `vz = -clip(DESCEND_VZ_KP·(alt − RELEASE_ALTITUDE), VZ_MIN, VZ_MAX)` with hard zero at/below the floor; SUCCEED on `alt ≤ RELEASE_ALTITUDE` AND lateral/angle within tol for `DESCEND_RELEASE_CONFIRMATIONS` frames). Sphere-loss fallback (uniform across phases): if the sphere is missing OR `target_sphere_cx` leaves `[DESCEND_SPHERE_TARGET_MARGIN_PX, IMAGE_WIDTH − margin]`, the anchor PID is disabled (`vy = 0`, `anchor_ok = True`) and `pick_hose_by_dir` falls back to the most-confident `rose`. Sphere loss does NOT abort. Only chosen-hose loss for `LOWER_MAX_LOST_FRAMES` consecutive frames aborts. |
+| LOWER_AND_ALIGN  | `lower_and_align` | [hook/states/lower_and_align.py](hook/states/lower_and_align.py)      | Three image-frame PIDs (rope angle → `vyaw`; hose row → `vx`; sphere anchor → `vy`) plus a symmetric `vz` controller around `RELEASE_ALTITUDE` during the descent phase, all on the same controller stack. Three internal phases: `yaw` (only `vyaw` while `\|angle\| > ALIGN_YAW_FIRST_TOLERANCE_DEG`), `align` (full `(vx, vy, vyaw)` with `standoff = ALIGN_STANDOFF_M`, `vz = 0`; exits to descend after `HOSE_ALIGN_CONFIRMATIONS` ticks within tol), and `descend` (same controllers; standoff ramps `ALIGN_STANDOFF_M → 0` over `DESCEND_STANDOFF_RAMP_TICKS`; `vz = -clip(DESCEND_VZ_KP·(alt − RELEASE_ALTITUDE), VZ_MIN, VZ_MAX) · sign(alt − RELEASE_ALTITUDE)` with a `±RELEASE_ALTITUDE_TOLERANCE_M` deadband — drone climbs back into the band if it undershoots; SUCCEED on `\|alt − RELEASE_ALTITUDE\| ≤ RELEASE_ALTITUDE_TOLERANCE_M` AND lateral/angle within tol for `DESCEND_RELEASE_CONFIRMATIONS` frames). Sphere-loss fallback (uniform across phases): if the sphere is missing OR `target_sphere_cx` leaves `[DESCEND_SPHERE_TARGET_MARGIN_PX, IMAGE_WIDTH − margin]`, the anchor PID is disabled (`vy = 0`, `anchor_ok = True`) and `pick_hose_by_dir` falls back to the most-confident `rose`. Sphere loss does NOT abort. Chosen-rope loss escalates: at `LOWER_RECOVERY_LOST_FRAMES` consecutive misses the state commands `+LOWER_RECOVERY_VZ` (climb) instead of descending/hovering to widen the FOV; at `LOWER_MAX_LOST_FRAMES` it aborts. |
 | RELEASE          | `release`         | [hook/states/release_hook.py](hook/states/release_hook.py)            | Stop motion, drive `SERVO_CHANNEL` from `HOLD_PWM` to `RELEASE_PWM`. |
 | RETURN_TO_LAUNCH | (suffix)          | [hook/core/states.py](hook/core/states.py)                            | `drone.rtl(altitude=RTL_ALTITUDE, method=NAVIGATE, land=False)`. |
 | LAND             | (suffix)          | [hook/core/states.py](hook/core/states.py)                            | `drone.land()` then close camera. |
@@ -285,16 +285,22 @@ previous separate `ALIGN_TO_HOSE` and `DESCEND_AND_ALIGN` states.
   errors all stay within tolerance for `HOSE_ALIGN_CONFIRMATIONS` ticks.
 - **Phase 3 (`descend`).** Same controllers; `standoff` linearly ramps
   `ALIGN_STANDOFF_M → 0` over `DESCEND_STANDOFF_RAMP_TICKS` ticks so the
-  rope target slides under the hook smoothly. Vertical command:
+  rope target slides under the hook smoothly. Vertical command is a
+  symmetric P controller around `RELEASE_ALTITUDE` with a deadband:
 
   ```
-  vz = -clip(DESCEND_VZ_KP * (altitude - RELEASE_ALTITUDE),
-             DESCEND_VZ_MIN, DESCEND_VZ_MAX)        if altitude > RELEASE_ALTITUDE
-  vz = 0                                            otherwise
+  err = altitude - RELEASE_ALTITUDE
+  vz = 0                                                      if |err| ≤ RELEASE_ALTITUDE_TOLERANCE_M
+  vz = -sign(err) · clip(DESCEND_VZ_KP·|err|, VZ_MIN, VZ_MAX) otherwise
   ```
 
-  SUCCEED on `altitude ≤ RELEASE_ALTITUDE` AND lateral/angle within
-  tolerance for `DESCEND_RELEASE_CONFIRMATIONS` frames.
+  Bidirectional on purpose: if a lidar glitch, wind kick, or hose-only
+  drift pulls the drone below the floor while it is still chasing
+  lateral/yaw, the controller commands positive `vz` to climb back into
+  the band rather than ride down. SUCCEED on
+  `|altitude − RELEASE_ALTITUDE| ≤ RELEASE_ALTITUDE_TOLERANCE_M` AND
+  lateral/angle within tolerance for `DESCEND_RELEASE_CONFIRMATIONS`
+  frames.
 
 Wiring (image-to-body: `image -y → body +x`, `image +x → body -y`;
 anisotropic ppm — see top of README):
@@ -319,8 +325,13 @@ robust to mid-mission detector drops:
   (`hose_segments(result)[0]`) when `pick_hose_by_dir` returns None — at
   low altitude the wrong rope is well outside the camera frustum, so the
   remaining detection is necessarily the chosen one.
-- Sphere loss does **not** abort. Only chosen-rope loss for
-  `LOWER_MAX_LOST_FRAMES` consecutive frames aborts.
+- Sphere loss does **not** abort. Chosen-rope loss escalates in two
+  steps: at `LOWER_RECOVERY_LOST_FRAMES` consecutive misses the
+  controller overrides descent/hover with `vz = +LOWER_RECOVERY_VZ`
+  (climb) to widen the FOV until detection returns; at
+  `LOWER_MAX_LOST_FRAMES` it aborts. Triggered by chosen-rope loss only
+  — sphere-only loss continues running the hose-only references at
+  whatever `vz` the descent controller chooses.
 
 ## Visualization
 
@@ -541,7 +552,15 @@ repo.
 
 ## Parameters (current defaults)
 
-All in [hook/core/constants.py](hook/core/constants.py).
+All real-drone values in [hook/core/constants.py](hook/core/constants.py).
+Simulation-only overrides in
+[hook/core/constants_sim.py](hook/core/constants_sim.py) — imported into
+the `constants` namespace when `HOOK_SIM=1`. The override file only
+touches controller gains and velocity caps (uniformly ×4 from the
+real-drone tuning, preserving the closed-loop shape at ~4× wall-clock
+speed) plus `SPHERE_HEIGHT_M`/`RELEASE_ALTITUDE` (rule-book arena
+geometry). Confirmation counts, tolerances, distances, output
+deadbands, and timeouts stay the same on purpose.
 
 ### Altitude
 | Name | Value | Used in |
@@ -549,7 +568,7 @@ All in [hook/core/constants.py](hook/core/constants.py).
 | `INITIAL_TAKEOFF_ALTITUDE` | 4.0 m | TAKEOFF |
 | `MAX_ASCEND_ALTITUDE` | 6.8 m | SEARCH_ASCEND cap |
 | `WORK_ALTITUDE` | 3.0 m | end of APPROACH descent |
-| `RELEASE_ALTITUDE` | 2.0 m | hard floor in DESCEND |
+| `RELEASE_ALTITUDE` | 2.0 m | center of the symmetric release band in DESCEND (±`RELEASE_ALTITUDE_TOLERANCE_M`) |
 | `RTL_ALTITUDE` | 2.7 m | RTL |
 
 ### Camera + body layout
@@ -587,6 +606,7 @@ sphere-anchor error and target (image-x) use `ppm_x`.
 | Name | Value |
 |---|---|
 | `ASCEND_VELOCITY` | 0.3 m/s |
+| `ASCEND_YAW_RATE_RAD_S` | 0.35 rad/s (yaw-search phase at the cap) |
 | `ASCENT_STOP_CONFIRMATIONS` | 20 |
 | `ASCENT_TIMEOUT` | 60.0 s |
 
@@ -639,8 +659,11 @@ requirement); only the standoff target and `vz` change between phases.
 | `ALIGN_YAW_FIRST_TOLERANCE_DEG` | 18.0° |
 | `HOSE_ALIGN_CONFIRMATIONS` | 8 (align→descend transition) |
 | `HOSE_ALIGN_TIMEOUT` | 100 s (align phase only) |
-| `LOWER_MAX_LOST_FRAMES` | 60 (counts ONLY chosen-rope losses) |
+| `LOWER_MAX_LOST_FRAMES` | 60 (counts ONLY chosen-rope losses; abort threshold) |
+| `LOWER_RECOVERY_LOST_FRAMES` | 20 (counts ONLY chosen-rope losses; climb-up threshold) |
+| `LOWER_RECOVERY_VZ` | 0.10 m/s (positive vz during the climb-recovery) |
 | `DESCEND_VZ_KP` / `DESCEND_VZ_MIN` / `DESCEND_VZ_MAX` | 0.20 / 0.05 / 0.20 m/s |
+| `RELEASE_ALTITUDE_TOLERANCE_M` | 0.15 m (release succeeds inside this band around `RELEASE_ALTITUDE`) |
 | `DESCEND_STANDOFF_RAMP_TICKS` | 30 |
 | `DESCEND_SPHERE_TARGET_MARGIN_PX` | 100 |
 | `DESCEND_RELEASE_CONFIRMATIONS` | 5 |
@@ -675,6 +698,10 @@ requirement); only the standoff target and `vz` change between phases.
 | Descend phase crosses the rope at the start | raise `DESCEND_STANDOFF_RAMP_TICKS` (slower ramp) or lower `HOSE_CENTER_KP`. |
 | Descent too fast near release | lower `DESCEND_VZ_MIN` or `DESCEND_VZ_MAX`. |
 | Mission gives up too early during dropouts | raise `APPROACH_MAX_LOST_FRAMES` / `LOWER_MAX_LOST_FRAMES`. Sphere loss alone never aborts LOWER_AND_ALIGN; if you see one, the chosen rope is also gone. |
+| LOWER_AND_ALIGN climbs back up unnecessarily on brief drop-outs | raise `LOWER_RECOVERY_LOST_FRAMES` (defer the climb-recovery) and/or `LOWER_RECOVERY_VZ` if the climb is too aggressive. |
+| LOWER_AND_ALIGN never releases / hovers in the band | check that the lateral/angle/anchor PIDs settle inside their tolerances during the time the lidar holds inside `±RELEASE_ALTITUDE_TOLERANCE_M`. Raise `RELEASE_ALTITUDE_TOLERANCE_M` if the lidar noise floor is wider than 15 cm. |
+| LOWER_AND_ALIGN keeps climbing back into the band and the descent bobs | the lateral PIDs aren't converging at the release altitude. Raise `HOSE_CENTER_TOLERANCE_M` / `SPHERE_ANCHOR_TOLERANCE_M`, or lower `DESCEND_VZ_KP` so the controller spends more time in the band. |
+| SEARCH_ASCEND aborts after the cap (sphere never enters frame) | lower `ASCEND_YAW_RATE_RAD_S` if the rotation is blurring detections; raise `ASCENT_TIMEOUT` if the yaw-search just needs more time. Check the segmentor recall under motion blur. |
 
 ## Models
 

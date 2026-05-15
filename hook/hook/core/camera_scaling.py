@@ -150,12 +150,18 @@ class EFLScaling(CameraScaling):
 class IntrinsicScaling(CameraScaling):
     """Calibrated pinhole + radial/tangential distortion.
 
-    Run a chessboard calibration (``ros2 run camera_calibration cameracalibrator``
-    or ``cv2.calibrateCamera``) and paste the resulting ``K`` and distortion
-    coefficients into ``CAMERA_INTRINSIC_K`` / ``CAMERA_INTRINSIC_DIST`` in
-    :mod:`hook.core.constants`. Until then the placeholder values reduce
-    this implementation to the EFL pinhole with zero distortion (so it's
-    safe to enable but provides no extra accuracy over :class:`EFLScaling`).
+    Uses ``CAMERA_INTRINSIC_K`` and ``CAMERA_INTRINSIC_DIST`` from
+    :mod:`hook.core.constants`. Both ``image_offset_to_body`` and
+    ``body_offset_to_image`` use the calibrated principal point and
+    distortion model internally, while their inputs/outputs remain
+    expressed as offsets from the *geometric* image center
+    ``(IMAGE_CENTER_X, IMAGE_CENTER_Y)`` -- matching the convention used
+    by :class:`FOVScaling`, :class:`EFLScaling`, and every mission state.
+    The two methods are mutual inverses (to numerical precision), so the
+    closed-loop ``target_pixel = IMAGE_CENTER + body_offset_to_image(...)``
+    / ``body_error = image_offset_to_body(measured_pixel - IMAGE_CENTER, ...)``
+    pipeline used across :mod:`hook.states` converges on the intended
+    body setpoint without coordinate-frame drift.
     """
 
     name = "intrinsic"
@@ -175,6 +181,8 @@ class IntrinsicScaling(CameraScaling):
         self._f_y = float(K[1, 1])
         self._c_x = float(K[0, 2])
         self._c_y = float(K[1, 2])
+        self._rvec = np.zeros(3, dtype=np.float64)
+        self._tvec = np.zeros(3, dtype=np.float64)
 
     def ppm_x(self, altitude_m, target_height_m=0.0):
         depth = _depth(altitude_m, target_height_m)
@@ -194,12 +202,28 @@ class IntrinsicScaling(CameraScaling):
         depth = _depth(altitude_m, target_height_m)
         if depth <= 0.0:
             return (0.0, 0.0)
-        pt = np.array(
-            [[[self._c_x + image_dx, self._c_y + image_dy]]], dtype=np.float64
+        abs_pixel = np.array(
+            [[[IMAGE_CENTER_X + image_dx, IMAGE_CENTER_Y + image_dy]]],
+            dtype=np.float64,
         )
-        normalized = cv2.undistortPoints(pt, self._K, self._dist).reshape(2)
+        normalized = cv2.undistortPoints(abs_pixel, self._K, self._dist).reshape(2)
         x_norm, y_norm = float(normalized[0]), float(normalized[1])
         return (-y_norm * depth, -x_norm * depth)
+
+    def body_offset_to_image(
+        self, body_x_m, body_y_m, altitude_m, target_height_m=0.0
+    ):
+        depth = _depth(altitude_m, target_height_m)
+        if depth <= 0.0:
+            return (0.0, 0.0)
+        obj_pt = np.array(
+            [[[-body_y_m, -body_x_m, depth]]], dtype=np.float64
+        )
+        img_pts, _ = cv2.projectPoints(
+            obj_pt, self._rvec, self._tvec, self._K, self._dist
+        )
+        abs_pix = img_pts.reshape(2)
+        return (float(abs_pix[0]) - IMAGE_CENTER_X, float(abs_pix[1]) - IMAGE_CENTER_Y)
 
 
 _FACTORY = {
@@ -241,15 +265,14 @@ def reset_camera_scaling() -> None:
 
 
 def image_center_for(scaling: CameraScaling) -> Tuple[float, float]:
-    """Principal point used by ``scaling`` when forming image-frame setpoints.
+    """Reference center used by ``scaling`` when consuming/producing image deltas.
 
-    For :class:`IntrinsicScaling` this is the calibrated ``(c_x, c_y)``; for
-    the FOV / EFL implementations it falls back to the geometric center of
-    the image. The mission states currently use ``IMAGE_CENTER_X`` /
-    ``IMAGE_CENTER_Y`` directly, so this helper exists for code paths
-    (the live evaluator) that want the principal point of a specific
-    implementation.
+    All three implementations (FOV / EFL / Intrinsic) interpret their image
+    deltas as offsets from the *geometric* image center
+    ``(IMAGE_CENTER_X, IMAGE_CENTER_Y)``. :class:`IntrinsicScaling` shifts to
+    the calibrated principal point ``(c_x, c_y)`` internally via
+    ``cv2.undistortPoints`` / ``cv2.projectPoints``; callers do not (and
+    should not) compensate for that themselves.
     """
-    if isinstance(scaling, IntrinsicScaling):
-        return (scaling._c_x, scaling._c_y)
+    del scaling
     return (float(IMAGE_CENTER_X), float(IMAGE_CENTER_Y))

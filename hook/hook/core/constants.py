@@ -44,22 +44,37 @@ SPHERE_HEIGHT_M = 1.4  # sphere mounted on hose at top of supports
 
 # Pixel <-> meter conversion strategy. Selects one of three implementations
 # in :mod:`hook.core.camera_scaling`:
-#   "fov"       - per-axis from HFOV/VFOV. Default. No calibration needed.
+#   "fov"       - per-axis from HFOV/VFOV. No calibration needed but disagrees
+#                 with the calibrated lens at 1920x1080 by ~24% (datasheet
+#                 HFOV=86 deg, calibrated HFOV=70.7 deg).
 #   "efl"       - isotropic pinhole from EFL_mm and pixel pitch.
-#   "intrinsic" - calibrated K + distortion. Replace the placeholder values
-#                 below with cv2.calibrateCamera output, then switch.
+#   "intrinsic" - calibrated K + distortion below. Recommended.
 CAMERA_SCALING_METHOD = "fov"
 CAMERA_EFL_MM = 3.9
 CAMERA_PIXEL_SIZE_UM = 2.9
+
+# Intrinsic matrix and distortion from a ChArUco calibration at 1920x1080
+# (nectar.vision.camera.calibration.CharucoCalibration, 5x7 board, 37.04 mm
+# square / 27.78 mm marker, DICT_4X4_1000). 46 valid views, mean reprojection
+# error 0.46 px. Calibrated HFOV = 2*atan(960/fx) = 70.7 deg, VFOV = 43.4 deg.
 CAMERA_INTRINSIC_K = np.array(
     [
-        [CAMERA_EFL_MM * 1000.0 / CAMERA_PIXEL_SIZE_UM, 0.0, IMAGE_CENTER_X],
-        [0.0, CAMERA_EFL_MM * 1000.0 / CAMERA_PIXEL_SIZE_UM, IMAGE_CENTER_Y],
+        [1353.3683044877657, 0.0, 1140.923487147102],
+        [0.0, 1355.4448404309912, 529.9287253668848],
         [0.0, 0.0, 1.0],
     ],
     dtype=np.float64,
 )
-CAMERA_INTRINSIC_DIST = np.zeros(5, dtype=np.float64)
+CAMERA_INTRINSIC_DIST = np.array(
+    [
+        -0.3568019973766494,
+        0.16045446741334152,
+        0.001923261467798276,
+        0.00026084634626530193,
+        -0.05407327493687658,
+    ],
+    dtype=np.float64,
+)
 
 # Segmentation model
 SEG_MODEL_PATH = os.path.join(
@@ -81,6 +96,11 @@ SEG_PREDICT_CONF = min(SPHERE_CONF, HOSE_CONF)
 ASCEND_VELOCITY = 0.3  # m/s upward while searching
 ASCENT_STOP_CONFIRMATIONS = 10
 ASCENT_TIMEOUT = 80.0  # seconds
+# After hitting MAX_ASCEND_ALTITUDE without a sphere debounce, the state
+# switches to yaw-search at this rate (FLU, +vyaw = CCW) until the sphere
+# is detected or ASCENT_TIMEOUT fires. Covers the case where the takeoff
+# yaw leaves the sphere outside the camera frustum.
+ASCEND_YAW_RATE_RAD_S = 0.15
 
 # Approach sphere
 APPROACH_TARGET_DISTANCE_M = 0.75  # parked hook-to-sphere horizontal distance
@@ -110,12 +130,10 @@ SIDE_TIMEOUT = 30.0
 ORIENT_SAMPLE_FRAMES = 7
 ORIENT_SKIP_THRESHOLD_RAD = math.radians(7.0)
 ORIENT_YAW_KP = 0.25  # rad/s per rad of polar-angle error
-ORIENT_MAX_YAW_VELOCITY = (
-    0.18
-)
-ORIENT_ANGLE_TOLERANCE_RAD = math.radians(10.0)
-ORIENT_CONFIRMATIONS = 5
-ORIENT_TIMEOUT = 65.0  # seconds
+ORIENT_MAX_YAW_VELOCITY = 0.18
+ORIENT_ANGLE_TOLERANCE_RAD = math.radians(14.0)
+ORIENT_CONFIRMATIONS = 4
+ORIENT_TIMEOUT = 180.0  # seconds
 ORIENT_MAX_LOST_FRAMES = 65  # sphere-loss tolerance during the spin
 
 PID_MIN_OUTPUT_VELOCITY_XY = 0.05  # m/s
@@ -136,7 +154,15 @@ HOSE_ALIGN_TIMEOUT = 180  # seconds
 # loss is NOT counted: when sphere is missing the controller falls back to
 # hose-only (vy=0). Only consecutive frames where the chosen rope itself
 # can't be detected count toward this limit.
-LOWER_MAX_LOST_FRAMES = 80
+LOWER_MAX_LOST_FRAMES = 86
+# Once the chosen-rope-lost streak exceeds this (but is still below
+# LOWER_MAX_LOST_FRAMES), the state stops descending / hovering and
+# climbs at +LOWER_RECOVERY_VZ to widen the FOV. As soon as detection
+# returns, normal control resumes. Handles the failure mode where the
+# drone drifts at low altitude and both sphere and chosen rope leave
+# the frame.
+LOWER_RECOVERY_LOST_FRAMES = 12
+LOWER_RECOVERY_VZ = 0.10  # m/s upward during the climb-recovery
 
 # Sphere anchor (along-hose) used by LOWER_AND_ALIGN.
 SPHERE_ANCHOR_DISTANCE_M = 0.8  # meters from sphere center along chosen hose direction
@@ -156,19 +182,30 @@ ALIGN_STANDOFF_M = 0.25
 # signals are geometrically meaningless until yaw is close to perpendicular).
 ALIGN_YAW_FIRST_TOLERANCE_DEG = 17.0
 
-# Vertical descent speed is proportional to altitude above RELEASE_ALTITUDE,
-#   vz_command = -clip(DESCEND_VZ_KP * (alt - RELEASE_ALTITUDE),
-#                      DESCEND_VZ_MIN, DESCEND_VZ_MAX)
+# Vertical command in the descend phase is a symmetric P controller around
+# RELEASE_ALTITUDE with a +-RELEASE_ALTITUDE_TOLERANCE_M deadband:
+#   err = altitude - RELEASE_ALTITUDE
+#   |err| <= tol           -> vz = 0  (in release band, can succeed)
+#   err >  tol             -> vz = -clip(VZ_KP*err, VZ_MIN, VZ_MAX)   (descend)
+#   err < -tol             -> vz = +clip(VZ_KP|err|, VZ_MIN, VZ_MAX)  (climb back)
+# Bidirectional so an unstable lidar reading or wind kick below the floor
+# is actively recovered instead of allowing the drone to ride down while
+# still chasing lateral/yaw - which is the regime that risks hitting the
+# rope/sphere/ground.
 DESCEND_VZ_KP = 0.1
 DESCEND_VZ_MIN = 0.02
 DESCEND_VZ_MAX = 0.1
 DESCEND_RELEASE_CONFIRMATIONS = 5
 DESCEND_TIMEOUT = 180  # seconds
+# Release succeeds only when the drone is inside this symmetric band
+# around RELEASE_ALTITUDE (and lateral/angle/anchor are within tolerance
+# for DESCEND_RELEASE_CONFIRMATIONS ticks).
+RELEASE_ALTITUDE_TOLERANCE_M = 0.15
 
 # Linear ramp from ALIGN_STANDOFF_M to 0 over this many control ticks at
 # the start of DESCEND. Eliminates the ~200 px target step (~0.30 m at
 # WORK_ALTITUDE) that previously saturated vx and made the drone shoot
-# past the rope. Tick-counted (not wall-clock) 
+# past the rope. Tick-counted (not wall-clock)
 DESCEND_STANDOFF_RAMP_TICKS = 10
 
 # Sphere is the lateral anchor only while its target image-x is comfortably
@@ -198,3 +235,8 @@ SIM_IMAGE_COMPRESSED = True
 
 if SIM_MODE:
     IMAGE_SOURCE = SIM_IMAGE_SOURCE
+    # Pulls controller-gain / velocity-cap overrides and the rule-book
+    # geometry into this module's namespace. See constants_sim.py for the
+    # full list and the scaling rule. Anything not redefined there keeps
+    # the real-drone value above.
+    from .constants_sim import * 

@@ -74,9 +74,12 @@ from hook.core.constants import (
     IMAGE_CENTER_Y,
     IMAGE_WIDTH,
     LOWER_MAX_LOST_FRAMES,
+    LOWER_RECOVERY_LOST_FRAMES,
+    LOWER_RECOVERY_VZ,
     PID_MIN_OUTPUT_VELOCITY_XY,
     PID_MIN_OUTPUT_VYAW,
     RELEASE_ALTITUDE,
+    RELEASE_ALTITUDE_TOLERANCE_M,
     SPHERE_ANCHOR_KP,
     SPHERE_ANCHOR_TOLERANCE_M,
     SPHERE_HEIGHT_M,
@@ -97,13 +100,26 @@ from hook.core.perception import (
 
 
 def _descend_vz(altitude: float) -> float:
-    """Proportional vertical command above the floor; hard zero at/below."""
-    above_floor = altitude - RELEASE_ALTITUDE
-    if above_floor <= 0.0:
+    """Bidirectional vertical command around RELEASE_ALTITUDE.
+
+    Symmetric P controller with a ``+-RELEASE_ALTITUDE_TOLERANCE_M``
+    deadband around the floor:
+
+    - inside the band -> ``vz = 0`` (release is allowed here).
+    - above the band  -> negative ``vz`` (descend).
+    - below the band  -> positive ``vz`` (climb back into band).
+
+    The bidirectional command keeps a lidar glitch or wind kick from
+    leaving the drone below the release altitude while it is still
+    chasing lateral/yaw alignment - the regime where it would otherwise
+    risk hitting the rope/sphere/ground.
+    """
+    err = altitude - RELEASE_ALTITUDE
+    if abs(err) <= RELEASE_ALTITUDE_TOLERANCE_M:
         return 0.0
-    speed = DESCEND_VZ_KP * above_floor
+    speed = DESCEND_VZ_KP * abs(err)
     speed = max(DESCEND_VZ_MIN, min(DESCEND_VZ_MAX, speed))
-    return -speed
+    return -speed if err > 0.0 else speed
 
 
 class LowerAndAlign(State):
@@ -146,7 +162,7 @@ class LowerAndAlign(State):
             now = time.time()
             if phase in ("yaw", "align") and now - align_start > HOSE_ALIGN_TIMEOUT:
                 drone.move_velocity(
-                    0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY, duration=2.0
+                    0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY, duration=1.0
                 )
                 yasmin.YASMIN_LOG_ERROR("LowerAndAlign: align phase timed out.")
                 return ABORT
@@ -189,7 +205,21 @@ class LowerAndAlign(State):
                         f"LowerAndAlign: chosen hose lost for {hose_lost} frames."
                     )
                     return ABORT
-                vz = _descend_vz(altitude) if phase == "descend" else 0.0
+                # Climb-recovery: once the lost-streak exceeds the recovery
+                # threshold, override descent/hover with a positive vz to
+                # widen the FOV. Triggered by chosen-rope loss only -
+                # sphere-only loss is already handled by the hose-only
+                # fallback below and must not climb.
+                if hose_lost > LOWER_RECOVERY_LOST_FRAMES:
+                    vz = LOWER_RECOVERY_VZ
+                    if hose_lost == LOWER_RECOVERY_LOST_FRAMES + 1:
+                        yasmin.YASMIN_LOG_INFO(
+                            f"LowerAndAlign[{phase}]: chosen rope lost for "
+                            f"{hose_lost} frames; climbing at +{vz:.2f} m/s "
+                            f"to recover detection."
+                        )
+                else:
+                    vz = _descend_vz(altitude) if phase == "descend" else 0.0
                 drone.move_velocity(
                     vx=0.0, vy=0.0, vz=vz, vyaw=0.0,
                     reference=MoveReference.BODY,
@@ -316,7 +346,10 @@ class LowerAndAlign(State):
                 else:
                     align_confirmed = 0
             elif phase == "descend":
-                if altitude <= RELEASE_ALTITUDE and centered and angle_ok and anchor_ok:
+                alt_in_band = (
+                    abs(altitude - RELEASE_ALTITUDE) <= RELEASE_ALTITUDE_TOLERANCE_M
+                )
+                if alt_in_band and centered and angle_ok and anchor_ok:
                     descend_confirmed += 1
                     if descend_confirmed >= DESCEND_RELEASE_CONFIRMATIONS:
                         drone.move_velocity(

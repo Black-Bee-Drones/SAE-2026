@@ -440,17 +440,24 @@ def draw_search_ascend(
     confirmations: int,
     target_confirmations: int,
     sphere_center: Optional[Tuple[float, float]],
+    phase: Optional[str] = None,
 ) -> None:
     """SEARCH_ASCEND composite overlay: minimal — just confirm sphere
-    detection and the ascent cap."""
+    detection, the ascent cap, and the active phase (``ascend`` while
+    climbing, ``yaw_search`` once the cap is reached)."""
     if sphere_center is not None:
         _draw_sphere(img, sphere_center)
 
     alt_txt = f"{altitude:.2f}m" if altitude is not None else "n/a"
+    header = (
+        f"SEARCH_ASCEND[{phase}]  alt={alt_txt}  cap={alt_max:.2f}m"
+        if phase is not None
+        else f"SEARCH_ASCEND  alt={alt_txt}  cap={alt_max:.2f}m"
+    )
     draw_hud(
         img,
         [
-            f"SEARCH_ASCEND  alt={alt_txt}  cap={alt_max:.2f}m",
+            header,
             f"sphere conf: {confirmations}/{target_confirmations}",
         ],
         anchor="tl",
