@@ -73,9 +73,7 @@ def _best_base(result) -> Optional[Detection]:
     """Highest-confidence class-`PRECISION_LAND_CLASS_ID` detection, or None."""
     if result is None or not result.detections:
         return None
-    candidates = [
-        d for d in result.detections if d.class_id == PRECISION_LAND_CLASS_ID
-    ]
+    candidates = [d for d in result.detections if d.class_id == PRECISION_LAND_CLASS_ID]
     if not candidates:
         return None
     return max(candidates, key=lambda d: d.confidence)
@@ -233,14 +231,19 @@ class PrecisionLand(State):
                     )
                     yasmin.YASMIN_LOG_ERROR("Base lost during initial align.")
                     return False
-                drone.move_velocity(
-                    0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY
-                )
+                drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
                 self._save_frame(
-                    frame, base=None, altitude=altitude, phase="align",
+                    frame,
+                    base=None,
+                    altitude=altitude,
+                    phase="align",
                     confirmations=confirmed,
                     target_confirmations=PRECISION_LAND_INIT_CONFIRMATIONS,
-                    ex_m=0.0, ey_m=0.0, vx=0.0, vy=0.0, vz=0.0,
+                    ex_m=0.0,
+                    ey_m=0.0,
+                    vx=0.0,
+                    vy=0.0,
+                    vz=0.0,
                 )
                 time.sleep(0.05)
                 continue
@@ -251,14 +254,19 @@ class PrecisionLand(State):
 
             if err_m < PRECISION_LAND_TOL_M:
                 confirmed += 1
-                drone.move_velocity(
-                    0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY
-                )
+                drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
                 self._save_frame(
-                    frame, base=base, altitude=altitude, phase="align",
+                    frame,
+                    base=base,
+                    altitude=altitude,
+                    phase="align",
                     confirmations=confirmed,
                     target_confirmations=PRECISION_LAND_INIT_CONFIRMATIONS,
-                    ex_m=ex_m, ey_m=ey_m, vx=0.0, vy=0.0, vz=0.0,
+                    ex_m=ex_m,
+                    ey_m=ey_m,
+                    vx=0.0,
+                    vy=0.0,
+                    vz=0.0,
                 )
                 if confirmed >= PRECISION_LAND_INIT_CONFIRMATIONS:
                     yasmin.YASMIN_LOG_INFO(
@@ -272,14 +280,24 @@ class PrecisionLand(State):
             confirmed = 0
             vx, vy = self._step_velocity(ex_m, ey_m)
             drone.move_velocity(
-                vx=vx, vy=vy, vz=0.0, vyaw=0.0,
+                vx=vx,
+                vy=vy,
+                vz=0.0,
+                vyaw=0.0,
                 reference=MoveReference.BODY,
             )
             self._save_frame(
-                frame, base=base, altitude=altitude, phase="align",
+                frame,
+                base=base,
+                altitude=altitude,
+                phase="align",
                 confirmations=confirmed,
                 target_confirmations=PRECISION_LAND_INIT_CONFIRMATIONS,
-                ex_m=ex_m, ey_m=ey_m, vx=vx, vy=vy, vz=0.0,
+                ex_m=ex_m,
+                ey_m=ey_m,
+                vx=vx,
+                vy=vy,
+                vz=0.0,
             )
 
             now = time.time()
@@ -296,9 +314,7 @@ class PrecisionLand(State):
         yasmin.YASMIN_LOG_ERROR("Initial align timed out.")
         return False
 
-    def _descend_and_succeed(
-        self, drone: MavrosDrone, camera: ImageHandler
-    ) -> str:
+    def _descend_and_succeed(self, drone: MavrosDrone, camera: ImageHandler) -> str:
         yasmin.YASMIN_LOG_INFO(
             f"Descending to {PRECISION_LAND_TARGET_ALTITUDE:.2f}m..."
         )
@@ -315,9 +331,7 @@ class PrecisionLand(State):
                 continue
 
             alt_err = altitude - PRECISION_LAND_TARGET_ALTITUDE
-            vz = -max(
-                0.0, min(PRECISION_LAND_VZ_KP * alt_err, PRECISION_LAND_VZ_MAX)
-            )
+            vz = -max(0.0, min(PRECISION_LAND_VZ_KP * alt_err, PRECISION_LAND_VZ_MAX))
 
             base = _best_base(result)
             if base is None:
@@ -329,14 +343,24 @@ class PrecisionLand(State):
                     yasmin.YASMIN_LOG_ERROR("Base lost during descent.")
                     return ABORT
                 drone.move_velocity(
-                    vx=0.0, vy=0.0, vz=vz, vyaw=0.0,
+                    vx=0.0,
+                    vy=0.0,
+                    vz=vz,
+                    vyaw=0.0,
                     reference=MoveReference.BODY,
                 )
                 self._save_frame(
-                    frame, base=None, altitude=altitude, phase="descend",
+                    frame,
+                    base=None,
+                    altitude=altitude,
+                    phase="descend",
                     confirmations=confirmed,
                     target_confirmations=PRECISION_LAND_LAND_CONFIRMATIONS,
-                    ex_m=0.0, ey_m=0.0, vx=0.0, vy=0.0, vz=vz,
+                    ex_m=0.0,
+                    ey_m=0.0,
+                    vx=0.0,
+                    vy=0.0,
+                    vz=vz,
                 )
                 time.sleep(0.05)
                 continue
@@ -347,21 +371,26 @@ class PrecisionLand(State):
             vx, vy = self._step_velocity(ex_m, ey_m)
 
             in_band = (
-                altitude <=
-                PRECISION_LAND_TARGET_ALTITUDE + PRECISION_LAND_ALT_TOLERANCE_M
+                altitude
+                <= PRECISION_LAND_TARGET_ALTITUDE + PRECISION_LAND_ALT_TOLERANCE_M
             )
             in_tol = err_m < PRECISION_LAND_TOL_M
 
             if in_band and in_tol:
                 confirmed += 1
-                drone.move_velocity(
-                    0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY
-                )
+                drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
                 self._save_frame(
-                    frame, base=base, altitude=altitude, phase="descend",
+                    frame,
+                    base=base,
+                    altitude=altitude,
+                    phase="descend",
                     confirmations=confirmed,
                     target_confirmations=PRECISION_LAND_LAND_CONFIRMATIONS,
-                    ex_m=ex_m, ey_m=ey_m, vx=0.0, vy=0.0, vz=0.0,
+                    ex_m=ex_m,
+                    ey_m=ey_m,
+                    vx=0.0,
+                    vy=0.0,
+                    vz=0.0,
                 )
                 if confirmed >= PRECISION_LAND_LAND_CONFIRMATIONS:
                     yasmin.YASMIN_LOG_INFO(
@@ -374,14 +403,24 @@ class PrecisionLand(State):
 
             confirmed = 0
             drone.move_velocity(
-                vx=vx, vy=vy, vz=vz, vyaw=0.0,
+                vx=vx,
+                vy=vy,
+                vz=vz,
+                vyaw=0.0,
                 reference=MoveReference.BODY,
             )
             self._save_frame(
-                frame, base=base, altitude=altitude, phase="descend",
+                frame,
+                base=base,
+                altitude=altitude,
+                phase="descend",
                 confirmations=confirmed,
                 target_confirmations=PRECISION_LAND_LAND_CONFIRMATIONS,
-                ex_m=ex_m, ey_m=ey_m, vx=vx, vy=vy, vz=vz,
+                ex_m=ex_m,
+                ey_m=ey_m,
+                vx=vx,
+                vy=vy,
+                vz=vz,
             )
 
             now = time.time()

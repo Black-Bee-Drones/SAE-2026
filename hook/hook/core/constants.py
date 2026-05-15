@@ -7,7 +7,7 @@ from ament_index_python.packages import get_package_share_directory
 # --- Altitude (meters) ---
 INITIAL_TAKEOFF_ALTITUDE = 4.5
 MAX_ASCEND_ALTITUDE = 6.2
-WORK_ALTITUDE = 3.4
+WORK_ALTITUDE = 3.7
 RELEASE_ALTITUDE = 2.05
 RTL_ALTITUDE = 3.0
 
@@ -80,7 +80,7 @@ CAMERA_INTRINSIC_DIST = np.array(
 SEG_MODEL_PATH = os.path.join(
     get_package_share_directory("hook"),
     "models",
-    "sae-2026-hang-all-yolo26n-seg-v2-960.pt",
+    "sae-2026-hang-all-yolo26n-seg-v2-960.engine",
 )
 SEG_IMGSZ = 960
 SEG_IOU = 0.6
@@ -221,9 +221,9 @@ PRECISION_LAND_MODEL_PATH = os.path.join(
     "best_7_class.pt",
 )
 PRECISION_LAND_CLASS_ID = 7
-PRECISION_LAND_CONF = 0.5
+PRECISION_LAND_CONF = 0.45
 PRECISION_LAND_IOU = 0.5
-PRECISION_LAND_IMGSZ = 960
+PRECISION_LAND_IMGSZ = 640
 
 PRECISION_LAND_RTL_ALTITUDE = 4.0
 PRECISION_LAND_TARGET_ALTITUDE = 0.6
@@ -267,4 +267,4 @@ if SIM_MODE:
     # geometry into this module's namespace. See constants_sim.py for the
     # full list and the scaling rule. Anything not redefined there keeps
     # the real-drone value above.
-    from .constants_sim import * 
+    from .constants_sim import *

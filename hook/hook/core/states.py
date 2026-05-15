@@ -16,7 +16,7 @@ from nectar.control import (
 from nectar.vision import ImageHandler, OpenCVConfig
 from nectar.vision.camera import ROSConfig
 from nectar.ai.segmentation import Segmentor
-from nectar.ai.detection import PerClassConfidenceFilter
+from nectar.ai.detection import Detector, PerClassConfidenceFilter
 
 from hook.core.constants import (
     INITIAL_TAKEOFF_ALTITUDE,
@@ -24,6 +24,10 @@ from hook.core.constants import (
     IMAGE_SOURCE,
     IMAGE_WIDTH,
     IMAGE_HEIGHT,
+    PRECISION_LAND_CONF,
+    PRECISION_LAND_IMGSZ,
+    PRECISION_LAND_IOU,
+    PRECISION_LAND_MODEL_PATH,
     SEG_MODEL_PATH,
     SEG_PREDICT_CONF,
     SIM_IMAGE_COMPRESSED,
