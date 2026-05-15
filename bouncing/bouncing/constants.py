@@ -29,14 +29,14 @@ SEARCH_LIMITE_ALTITUDE = 7.0  # m
 SEARCH_TARGET_ALTITUDE = 6.0  # m
 SEARCH_TIMEOUT = 3 * 60  # s
 SEARCH_VERTICAL_SPEED = 0.5  # m/s
-SEARCH_PHOTOS_PER_POINT = 10
+SEARCH_PHOTOS_PER_POINT = 15
 SEARCH_POINTS = [
     {
         'x': 0.0,
         'y': 0.0,
     },
     {
-        'x': 3.0,
+        'x': 3.5,
         'y': 0.0,
     },
     {
@@ -44,7 +44,7 @@ SEARCH_POINTS = [
         'y': 0.0,
     },
     {
-        'x': -3.0,
+        'x': -3.5,
         'y': 0.0,
     },
 ]
