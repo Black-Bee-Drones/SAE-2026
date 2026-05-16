@@ -1,4 +1,3 @@
-from operator import index
 import cv2
 import subprocess
 import time
@@ -259,7 +258,7 @@ class GaugeReading(State):
 
         self.cam = blackboard["cam"]
         if self.cam is None:
-            self.cam = cv2.VideoCapture(index, cv2.CAP_V4L2)
+            self.cam = cv2.VideoCapture(DEVICE, cv2.CAP_V4L2)
 
         self.node.get_logger().info("[GaugeReading] Centering on manometer...")
         self._set_exposure(GENERAL_EXPOSURE)
