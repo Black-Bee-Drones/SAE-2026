@@ -5,7 +5,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 
-LOCATIONS = [(-6,-2,-6),(0,2.5,-6),(5,-2.5,-6)]
+LOCATIONS = [(-5,-1.5,-6.5),(0,1.5,-6.5),(4,-2,-6.5)]
 
 # Flight related
 TAKEOFF_ALTITUDE = 2.5
@@ -21,3 +21,10 @@ except:
     package_root = os.path.dirname(current_dir)
     MODEL_PATH = os.path.join(package_root, 'models', 'best.pt')
     COARSE_MODEL_PATH = os.path.join(package_share_directory, 'models', 'coarse.pt')
+
+
+# Camera details
+
+DEVICE=0
+GENERAL_EXPOSURE=1
+FINE_EXPOSURE=1

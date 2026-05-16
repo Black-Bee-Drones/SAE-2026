@@ -1,5 +1,6 @@
 from operator import index
 import cv2
+import subprocess
 import time
 from yasmin import Blackboard, State
 from yasmin_ros.yasmin_node import YasminNode
@@ -8,6 +9,12 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 from nectar.ai.detection.models.ultralytics import UltralyticsModel
 from zaxis.drone import Drone
 from sensor_msgs.msg import CompressedImage
+
+from faulty_or_not.parameters import (
+    GENERAL_EXPOSURE,
+    FINE_EXPOSURE,
+    DEVICE
+)
 
 import os
 
@@ -34,8 +41,8 @@ class GaugeReading(State):
         self,
         model_path: str,
         coarse_model_path: str,
-        confidence_threshold: float = 0.4,
-        coarse_confidence_threshold: float = 0.4,
+        confidence_threshold: float = 0.5,
+        coarse_confidence_threshold: float = 0.5,
     ):
         super().__init__(outcomes=[SUCCEED, ABORT])
         self.node = YasminNode.get_instance()
@@ -55,6 +62,22 @@ class GaugeReading(State):
         except Exception as e:
             self.node.get_logger().error(f"Error loading {label} model: {e}")
             return None
+
+    def _set_exposure(self, exposure: int):
+        try:
+            subprocess.run(
+                ["v4l2-ctl", f"--device={DEVICE}", "--set-ctrl=auto_exposure=1"],
+                check=True, capture_output=True
+            )
+            subprocess.run(
+                ["v4l2-ctl", f"--device={DEVICE}", f"--set-ctrl=exposure_time_absolute={exposure}"],
+                check=True, capture_output=True
+            )
+            self.node.get_logger().info(f"[GaugeReading] Exposure set to {exposure}")
+        except subprocess.CalledProcessError as e:
+            self.node.get_logger().error(
+                f"[GaugeReading] Failed to set exposure {exposure}: {e.stderr.decode()}"
+            )
 
     def _read_frame(self, blackboard: Blackboard):
         if blackboard["simulation"]:
@@ -236,25 +259,16 @@ class GaugeReading(State):
 
         self.cam = blackboard["cam"]
         if self.cam is None:
-            index = 0
-            try:
-                os.system(f"v4l2-ctl -d /dev/video{index} -c auto_exposure=1")
-                time.sleep(0.5)
-                os.system(f"v4l2-ctl -d /dev/video{index} -c backlight_compensation=0")
-                os.system(f"v4l2-ctl -d /dev/video{index} -c exposure_dynamic_framerate=0")
-                os.system(f"v4l2-ctl -d /dev/video{index} -c exposure_time_absolute=1")
-                os.system(f"v4l2-ctl -d /dev/video{index} --set-fmt-video=width=640,height=480,pixelformat=YUYV")
-            except:
-                pass
-            
             self.cam = cv2.VideoCapture(index, cv2.CAP_V4L2)
 
         self.node.get_logger().info("[GaugeReading] Centering on manometer...")
+        self._set_exposure(GENERAL_EXPOSURE)
         centered = self._center_on_manometer(blackboard=blackboard)
 
         if not centered:
             self.node.get_logger().warn("[GaugeReading] Failed to center on manometer, proceeding anyway.")
 
+        self._set_exposure(FINE_EXPOSURE)
         self.node.get_logger().info("[GaugeReading] Starting classification...")
 
         start_time = time.time()
@@ -273,7 +287,6 @@ class GaugeReading(State):
 
             frame_count += 1
 
-            # !! INÍCIO DAS ALTERAÇÕES !!
             det, _, _, ann = self._best_detection_in_frame(
                 frame, self.detector, self.confidence_threshold
             )
@@ -296,7 +309,6 @@ class GaugeReading(State):
                 f"alt_err: {alt_error:.3f} | "
                 f"vz: {vz:.3f}"
             )
-            # !! FIM DAS ALTERAÇÕES !!
 
             last_ann = ann
             class_id = det.class_id
