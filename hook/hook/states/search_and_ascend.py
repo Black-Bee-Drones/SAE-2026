@@ -12,6 +12,7 @@ from nectar.vision import ImageHandler
 from hook.core import overlay
 from hook.core.constants import (
     ASCEND_VELOCITY,
+    ASCEND_VELOCITY_SLOW,
     ASCEND_YAW_RATE_RAD_S,
     ASCENT_STOP_CONFIRMATIONS,
     ASCENT_TIMEOUT,
@@ -21,18 +22,25 @@ from hook.core.frame_sink import FrameSink, build_state_sink
 from hook.core.perception import best_sphere, run_seg
 
 
+_LOG_PERIOD_S = 0.5
+
+
 class SearchAndAscend(State):
     """Ascend until the sphere is debounced; yaw-search at the altitude cap.
 
     Two phases sharing the same debounce/save path:
 
-    - ``ascend``: vz = ASCEND_VELOCITY upward until either the sphere is
-      confirmed for ASCENT_STOP_CONFIRMATIONS consecutive frames or the
-      lidar altitude reaches MAX_ASCEND_ALTITUDE.
-    - ``yaw_search``: vz = 0, vyaw = ASCEND_YAW_RATE_RAD_S. Engaged once
-      the cap is hit without a debounced sphere - covers the case where
-      the takeoff heading leaves the sphere outside the camera frustum.
-      Same debounce logic finishes the state; ASCENT_TIMEOUT bounds it.
+    - ``ascend``: ``vz = ASCEND_VELOCITY`` upward while no sphere is in
+      view; ``vz = ASCEND_VELOCITY_SLOW`` (still climbing, slower) while
+      the sphere has been seen but not yet confirmed for
+      ``ASCENT_STOP_CONFIRMATIONS`` consecutive frames. Exits to SUCCEED
+      on confirmation OR transitions to ``yaw_search`` when the lidar
+      altitude reaches ``MAX_ASCEND_ALTITUDE`` without a confirmed
+      sphere.
+    - ``yaw_search``: ``vz = 0``, ``vyaw = ASCEND_YAW_RATE_RAD_S`` while
+      no sphere is in view; on detection the drone stops rotating
+      (``vyaw = 0``) so the debounce can finish without sliding the
+      sphere out of the frame. ``ASCENT_TIMEOUT`` bounds the whole state.
     """
 
     def __init__(self):
@@ -53,6 +61,7 @@ class SearchAndAscend(State):
         latest = None
         phase = "ascend"
         start_time = time.time()
+        last_log = 0.0
 
         while time.time() - start_time < ASCENT_TIMEOUT:
             drone.delay(0.05)
@@ -73,55 +82,73 @@ class SearchAndAscend(State):
 
             frame, result = run_seg(camera, segmentor, class_filter)
             if frame is None:
-                time.sleep(0.05)
                 continue
 
             sphere = best_sphere(result)
 
+            # Phase-aware command: slow climb / stop rotating when the
+            # sphere is in view but not yet confirmed; full climb / spin
+            # otherwise.
+            if sphere is not None:
+                if phase == "ascend":
+                    vz_cmd, vyaw_cmd = ASCEND_VELOCITY_SLOW, 0.0
+                else:
+                    vz_cmd, vyaw_cmd = 0.0, 0.0
+            else:
+                if phase == "ascend":
+                    vz_cmd, vyaw_cmd = ASCEND_VELOCITY, 0.0
+                else:
+                    vz_cmd, vyaw_cmd = 0.0, ASCEND_YAW_RATE_RAD_S
+
+            drone.move_velocity(
+                vx=0.0, vy=0.0, vz=vz_cmd, vyaw=vyaw_cmd,
+                reference=MoveReference.BODY,
+            )
+
             if sphere is not None:
                 confirmations += 1
                 latest = sphere
-                drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
+            else:
+                confirmations = 0
 
-                self._save_frame(
-                    frame, result, altitude, confirmations, phase,
-                    sphere_center=sphere.center,
-                )
-
-                alt_txt = f"{altitude:.2f}m" if altitude is not None else "n/a"
-                yasmin.YASMIN_LOG_INFO(
-                    f"Sphere[{phase}] ({confirmations}/{ASCENT_STOP_CONFIRMATIONS}): "
-                    f"conf={sphere.confidence:.2f} "
-                    f"center=({sphere.center[0]:.0f},{sphere.center[1]:.0f}) alt={alt_txt}"
-                )
-
-                if confirmations >= ASCENT_STOP_CONFIRMATIONS:
-                    blackboard["sphere_center"] = latest.center
-                    blackboard["sphere_bbox"] = latest.bbox
-                    blackboard["ascent_alt"] = altitude
-                    yasmin.YASMIN_LOG_INFO(
-                        f"Sphere confirmed at ({latest.center[0]:.0f},{latest.center[1]:.0f})."
-                    )
-                    return SUCCEED
-                time.sleep(0.03)
-                continue
-
-            confirmations = 0
             self._save_frame(
-                frame, result, altitude, confirmations, phase, sphere_center=None
+                frame, result, altitude, confirmations, phase,
+                sphere_center=sphere.center if sphere is not None else None,
             )
 
-            if phase == "yaw_search":
-                drone.move_velocity(
-                    vx=0.0, vy=0.0, vz=0.0, vyaw=ASCEND_YAW_RATE_RAD_S,
-                    reference=MoveReference.BODY,
+            now = time.time()
+            if now - last_log > _LOG_PERIOD_S or (
+                sphere is not None and confirmations == 1
+            ):
+                alt_txt = f"{altitude:.2f}m" if altitude is not None else "n/a"
+                det_txt = (
+                    f"sphere conf={sphere.confidence:.2f} "
+                    f"({sphere.center[0]:.0f},{sphere.center[1]:.0f})"
+                    if sphere is not None
+                    else "sphere -"
                 )
-            else:
-                drone.move_velocity(
-                    vx=0.0, vy=0.0, vz=ASCEND_VELOCITY, vyaw=0.0,
-                    reference=MoveReference.BODY,
+                yasmin.YASMIN_LOG_INFO(
+                    f"SearchAndAscend[{phase:>11s}] alt={alt_txt} "
+                    f"conf={confirmations}/{ASCENT_STOP_CONFIRMATIONS} | "
+                    f"{det_txt} | "
+                    f"cmd: vz={vz_cmd:+.2f} vyaw={vyaw_cmd:+.2f}"
                 )
-            time.sleep(0.05)
+                last_log = now
+
+            if sphere is not None and confirmations >= ASCENT_STOP_CONFIRMATIONS:
+                drone.move_velocity(
+                    0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY
+                )
+                blackboard["sphere_center"] = latest.center
+                blackboard["sphere_bbox"] = latest.bbox
+                blackboard["ascent_alt"] = altitude
+                alt_txt = f"{altitude:.2f}m" if altitude is not None else "n/a"
+                yasmin.YASMIN_LOG_INFO(
+                    f"Sphere confirmed at "
+                    f"({latest.center[0]:.0f},{latest.center[1]:.0f}) "
+                    f"alt={alt_txt}."
+                )
+                return SUCCEED
 
         drone.move_velocity(
             0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY, duration=2.0

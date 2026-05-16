@@ -181,7 +181,6 @@ class LowerAndAlign(State):
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)
             if altitude is None:
-                time.sleep(0.05)
                 continue
 
             frame, result = run_seg(camera, segmentor, class_filter)
@@ -224,7 +223,6 @@ class LowerAndAlign(State):
                     vx=0.0, vy=0.0, vz=vz, vyaw=0.0,
                     reference=MoveReference.BODY,
                 )
-                time.sleep(0.05)
                 continue
 
             hose_lost = 0
@@ -379,8 +377,6 @@ class LowerAndAlign(State):
                     f"{anchor_str} | "
                     f"cmd: vx={vx:+.2f} vy={vy:+.2f}{vz_str} vyaw={vyaw:+.2f}"
                 )
-
-            time.sleep(0.03)
 
     def _build_pids(self) -> None:
         if self.pid_yaw is None:

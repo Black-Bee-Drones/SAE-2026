@@ -94,6 +94,10 @@ SEG_PREDICT_CONF = min(SPHERE_CONF, HOSE_CONF)
 
 # Search and ascend
 ASCEND_VELOCITY = 0.19  # m/s upward while searching
+# Reduced ascend speed used as soon as a sphere is detected (still inside
+# the debounce). Keeps climbing so a single noisy frame doesn't stall the
+# state, but slowly enough not to overshoot once the sphere is in view.
+ASCEND_VELOCITY_SLOW = 0.05  # m/s
 ASCENT_STOP_CONFIRMATIONS = 6
 ASCENT_TIMEOUT = 80.0  # seconds
 # After hitting MAX_ASCEND_ALTITUDE without a sphere debounce, the state

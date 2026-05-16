@@ -26,6 +26,7 @@ WORK_ALTITUDE = 4.0
 
 # --- Search and ascend ---
 ASCEND_VELOCITY = 1.0  # 0.30 * 4
+ASCEND_VELOCITY_SLOW = 0.28  # 0.07 * 4
 ASCEND_YAW_RATE_RAD_S = 1.0  # 0.35 * 4
 
 # --- Approach sphere ---

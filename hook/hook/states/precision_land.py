@@ -298,7 +298,6 @@ class PrecisionLand(State):
             drone.delay(0.05)
             frame, result, altitude = self._read(drone, camera)
             if frame is None:
-                time.sleep(0.05)
                 continue
 
             base = _best_base(result)
@@ -324,7 +323,6 @@ class PrecisionLand(State):
                     vy=0.0,
                     vz=0.0,
                 )
-                time.sleep(0.05)
                 continue
 
             lost = 0
@@ -353,7 +351,6 @@ class PrecisionLand(State):
                         f"base=({base.center[0]:.0f},{base.center[1]:.0f})"
                     )
                     return True
-                time.sleep(0.03)
                 continue
 
             confirmed = 0
@@ -387,7 +384,6 @@ class PrecisionLand(State):
                     f"cmd: vx={vx:+.2f} vy={vy:+.2f}"
                 )
                 last_log = now
-            time.sleep(0.03)
 
         drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
         yasmin.YASMIN_LOG_ERROR("Initial align timed out.")
@@ -406,7 +402,6 @@ class PrecisionLand(State):
             drone.delay(0.05)
             frame, result, altitude = self._read(drone, camera)
             if frame is None or altitude is None:
-                time.sleep(0.05)
                 continue
 
             alt_err = altitude - PRECISION_LAND_TARGET_ALTITUDE
@@ -441,7 +436,6 @@ class PrecisionLand(State):
                     vy=0.0,
                     vz=vz,
                 )
-                time.sleep(0.05)
                 continue
 
             lost = 0
@@ -477,7 +471,6 @@ class PrecisionLand(State):
                         f"err={err_m:.3f}m"
                     )
                     return SUCCEED
-                time.sleep(0.03)
                 continue
 
             confirmed = 0
@@ -510,7 +503,6 @@ class PrecisionLand(State):
                     f"cmd: vx={vx:+.2f} vy={vy:+.2f} vz={vz:+.2f}"
                 )
                 last_log = now
-            time.sleep(0.03)
 
         drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
         yasmin.YASMIN_LOG_ERROR("Descend-and-land timed out.")

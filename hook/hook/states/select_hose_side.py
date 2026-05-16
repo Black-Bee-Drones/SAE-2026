@@ -25,6 +25,7 @@ from yasmin_ros.basic_outcomes import SUCCEED, ABORT
 
 from nectar.ai.detection import PerClassConfidenceFilter
 from nectar.ai.segmentation import Segmentor
+from nectar.control import MavrosDrone
 from nectar.vision import ImageHandler
 
 from hook.core import overlay
@@ -51,6 +52,7 @@ class SelectHoseSide(State):
         self.sink: FrameSink = None
 
     def execute(self, blackboard: Blackboard):
+        drone: MavrosDrone = blackboard["drone"]
         camera: ImageHandler = blackboard["camera"]
         segmentor: Segmentor = blackboard["segmentor"]
         class_filter: PerClassConfidenceFilter = blackboard["class_filter"]
@@ -62,7 +64,9 @@ class SelectHoseSide(State):
 
         self.sink = build_state_sink(blackboard, "select_side")
 
-        side_unit = self._decide_side(camera, segmentor, class_filter, approach_offset)
+        side_unit = self._decide_side(
+            drone, camera, segmentor, class_filter, approach_offset
+        )
         if side_unit is None:
             yasmin.YASMIN_LOG_ERROR("Could not decide hose side: no usable samples.")
             return ABORT
@@ -78,6 +82,7 @@ class SelectHoseSide(State):
 
     def _decide_side(
         self,
+        drone: MavrosDrone,
         camera,
         segmentor,
         class_filter,
@@ -90,17 +95,16 @@ class SelectHoseSide(State):
         start = time.time()
 
         while collected < SIDE_SAMPLE_FRAMES and time.time() - start < SIDE_TIMEOUT:
+            drone.delay(0.05)
             frame, result = run_seg(camera, segmentor, class_filter)
             sphere = best_sphere(result)
             hoses = hose_segments(result)
             if sphere is None or not hoses:
-                time.sleep(0.05)
                 continue
 
             if u_axis is None:
                 pose = hose_pose(hoses[0])
                 if pose is None:
-                    time.sleep(0.05)
                     continue
                 u_axis = pose[4]
 
@@ -130,7 +134,6 @@ class SelectHoseSide(State):
                 plus_is_long=plus_is_long,
                 sample_idx=collected,
             )
-            time.sleep(0.03)
 
         if u_axis is None:
             return None

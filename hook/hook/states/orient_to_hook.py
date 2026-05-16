@@ -229,7 +229,6 @@ class OrientToHook(State):
                     vyaw=0.0,
                     sample_idx=len(deltas),
                 )
-                time.sleep(0.05)
                 continue
 
             sx, sy = sphere.center
@@ -254,8 +253,6 @@ class OrientToHook(State):
                 vyaw=0.0,
                 sample_idx=len(deltas),
             )
-
-            time.sleep(0.03)
 
         if not deltas or last_sphere_xy is None or last_ppm is None:
             return None
@@ -322,7 +319,6 @@ class OrientToHook(State):
                     vyaw=last_vyaw,
                     sample_idx=None,
                 )
-                time.sleep(0.03)
                 continue
 
             lost = 0
@@ -372,8 +368,6 @@ class OrientToHook(State):
                     return delta_observed
             else:
                 confirmed = 0
-
-            time.sleep(0.03)
 
         drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
         yasmin.YASMIN_LOG_ERROR(

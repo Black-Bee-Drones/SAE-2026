@@ -143,7 +143,6 @@ class ApproachSphere(State):
             _, result = run_seg(camera, segmentor, class_filter)
             sphere = best_sphere(result)
             if sphere is None:
-                time.sleep(0.05)
                 continue
             cx, cy = sphere.center
             dx = cx - IMAGE_CENTER_X
@@ -248,7 +247,6 @@ class ApproachSphere(State):
                     )
                     yasmin.YASMIN_LOG_ERROR("Lost sphere during lateral approach.")
                     return False
-                time.sleep(0.05)
                 continue
 
             lost = 0
@@ -305,8 +303,6 @@ class ApproachSphere(State):
                 )
                 last_log = now
 
-            time.sleep(0.03)
-
         drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
         yasmin.YASMIN_LOG_ERROR("Lateral approach timed out.")
         return False
@@ -325,7 +321,6 @@ class ApproachSphere(State):
             if altitude is None:
                 altitude = drone.get_altitude(AltitudeSource.AUTO)
             if altitude is None:
-                time.sleep(0.05)
                 continue
 
             if altitude <= WORK_ALTITUDE:
@@ -356,7 +351,6 @@ class ApproachSphere(State):
                     vx=0.0, vy=0.0, vz=vz_blind, vyaw=0.0,
                     reference=MoveReference.BODY,
                 )
-                time.sleep(0.05)
                 continue
 
             lost = 0
@@ -392,8 +386,6 @@ class ApproachSphere(State):
                     f"cmd: vx={vx:+.2f} vy={vy:+.2f} vz={-APPROACH_DESCEND_VELOCITY:+.2f}"
                 )
                 last_log = now
-
-            time.sleep(0.03)
 
         drone.move_velocity(0.0, 0.0, 0.0, 0.0, reference=MoveReference.BODY)
         yasmin.YASMIN_LOG_ERROR("Descent to work altitude timed out.")
