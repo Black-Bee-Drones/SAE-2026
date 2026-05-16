@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 
 # --- Altitude (meters) ---
 INITIAL_TAKEOFF_ALTITUDE = 4.5
-MAX_ASCEND_ALTITUDE = 6.2
+MAX_ASCEND_ALTITUDE = 6.5
 WORK_ALTITUDE = 3.7
 RELEASE_ALTITUDE = 2.05
 RTL_ALTITUDE = 3.0
@@ -98,7 +98,7 @@ ASCEND_VELOCITY = 0.19  # m/s upward while searching
 # the debounce). Keeps climbing so a single noisy frame doesn't stall the
 # state, but slowly enough not to overshoot once the sphere is in view.
 ASCEND_VELOCITY_SLOW = 0.05  # m/s
-ASCENT_STOP_CONFIRMATIONS = 6
+ASCENT_STOP_CONFIRMATIONS = 5
 ASCENT_TIMEOUT = 80.0  # seconds
 # After hitting MAX_ASCEND_ALTITUDE without a sphere debounce, the state
 # switches to yaw-search at this rate (FLU, +vyaw = CCW) until the sphere
@@ -120,7 +120,7 @@ APPROACH_TIMEOUT = 180  # seconds
 APPROACH_MAX_LOST_FRAMES = 60
 
 # Hose side selection
-SIDE_SAMPLE_FRAMES = 9
+SIDE_SAMPLE_FRAMES = 6
 SIDE_LENGTH_RATIO = 1.4
 SIDE_TIMEOUT = 30.0
 
@@ -131,11 +131,11 @@ SIDE_TIMEOUT = 30.0
 # Vector-mean over (cosΔ, sinΔ) handles wrap. If |Δ| < ORIENT_SKIP_THRESHOLD_RAD:
 # SUCCEED with no rotation. Otherwise spin: PID drives the cumulative
 # body yaw (computed from the sphere's body-frame polar angle) to Δ_target.
-ORIENT_SAMPLE_FRAMES = 7
+ORIENT_SAMPLE_FRAMES = 6
 ORIENT_SKIP_THRESHOLD_RAD = math.radians(7.0)
 ORIENT_YAW_KP = 0.25  # rad/s per rad of polar-angle error
 ORIENT_MAX_YAW_VELOCITY = 0.18
-ORIENT_ANGLE_TOLERANCE_RAD = math.radians(14.0)
+ORIENT_ANGLE_TOLERANCE_RAD = math.radians(15.0)
 ORIENT_CONFIRMATIONS = 4
 ORIENT_TIMEOUT = 180.0  # seconds
 ORIENT_MAX_LOST_FRAMES = 65  # sphere-loss tolerance during the spin
@@ -199,7 +199,7 @@ ALIGN_YAW_FIRST_TOLERANCE_DEG = 17.0
 DESCEND_VZ_KP = 0.1
 DESCEND_VZ_MIN = 0.02
 DESCEND_VZ_MAX = 0.1
-DESCEND_RELEASE_CONFIRMATIONS = 5
+DESCEND_RELEASE_CONFIRMATIONS = 4
 DESCEND_TIMEOUT = 180  # seconds
 # Release succeeds only when the drone is inside this symmetric band
 # around RELEASE_ALTITUDE (and lateral/angle/anchor are within tolerance
