@@ -85,6 +85,7 @@ class Search(State):
             count_to_next_point = 0
             point_index = 0
             start = self.node.get_clock().now()
+            count_gabarito = 0
             duration = Duration(seconds=SEARCH_TIMEOUT)
             while self.node.get_clock().now() - start < duration:
 
@@ -102,10 +103,13 @@ class Search(State):
                     if not blackboard['target_base']:
                         yasmin.YASMIN_LOG_ERROR('Target NOT found.')
 
-                elif (blackboard['target_base'] != target_base):
+                elif (blackboard['target_base'] != target_base and count_gabarito < 3):
                     yasmin.YASMIN_LOG_INFO(f'Target base: {target_base}.')
                     blackboard['target_base'] = target_base
-                    count_landind_base = 0
+                    count_gabarito = 0
+
+                else:
+                    count_gabarito += 1
 
                 if blackboard['target_base']:
                     landing_base_number = self.get_landing_base_number(blackboard['target_base'], result)
