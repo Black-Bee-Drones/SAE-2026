@@ -249,8 +249,11 @@ class Search(State):
             corners, ids, _ = detector.detectMarkers(gray)
 
             if ids is not None:
-                yasmin.YASMIN_LOG_INFO(f'Aruco detected: ids={ids.flatten()}')
-                return ids.flatten()
+                try:
+                    yasmin.YASMIN_LOG_INFO(f'Aruco detected: ids={ids.flatten()[0]}')
+                    return ids.flatten()[0]
+                except:
+                    return None
 
         return None
     
