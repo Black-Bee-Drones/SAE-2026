@@ -1,7 +1,6 @@
 import math
 import cv2
 
-import rclpy
 from rclpy.duration import Duration
 
 import yasmin
@@ -207,8 +206,8 @@ class Search(State):
     def get_target_number(self, result):
         for d in result.filter_by_class(['6']):
             x1, y1, x2, y2 = d.bbox
-
-            h, w = result.image.shape[:2]
+            w = d.width
+            h = d.height
 
             x1 = min(w, max(0, int(x1 - w / 2)))
             y1 = min(h, max(0, int(y1 - h / 2)))
