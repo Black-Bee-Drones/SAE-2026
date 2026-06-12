@@ -1,0 +1,19 @@
+DEVICE="/dev/video0"
+
+v4l2-ctl -d $DEVICE -c brightness=128
+v4l2-ctl -d $DEVICE -c contrast=128
+v4l2-ctl -d $DEVICE -c saturation=128
+v4l2-ctl -d $DEVICE -c white_balance_automatic=1
+v4l2-ctl -d $DEVICE -c gain=0
+v4l2-ctl -d $DEVICE -c power_line_frequency=2
+v4l2-ctl -d $DEVICE -c white_balance_temperature=4000
+v4l2-ctl -d $DEVICE -c sharpness=128
+v4l2-ctl -d $DEVICE -c backlight_compensation=0
+v4l2-ctl -d $DEVICE -c auto_exposure=3
+v4l2-ctl -d $DEVICE -c exposure_time_absolute=250
+v4l2-ctl -d $DEVICE -c exposure_dynamic_framerate=1 # 0
+v4l2-ctl -d $DEVICE -c pan_absolute=0
+v4l2-ctl -d $DEVICE -c tilt_absolute=0
+v4l2-ctl -d $DEVICE -c focus_absolute=0
+v4l2-ctl -d $DEVICE -c focus_automatic_continuous=0
+v4l2-ctl -d $DEVICE -c zoom_absolute=100
